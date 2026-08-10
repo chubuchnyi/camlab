@@ -194,6 +194,72 @@ def _cmd_fit(args) -> int:
     return 0
 
 
+def _cmd_markings(args) -> int:
+    """Draw the CV-detected markings over every frame. No camera anywhere in this.
+
+    The point is isolation. Every other picture in camlab shows a camera's opinion of the pitch;
+    this one shows only what the frame itself says is painted, so the detector can be judged
+    without a camera to blame or to hide behind. A human scrubbing this can see directly what the
+    metric is being fed — which is how the mowing-stripe boundary was caught being measured
+    against in the first place.
+    """
+    import time
+
+    import cv2
+
+    from camlab.measure.lines import detect_segments, on_paint_fraction
+    from camlab.measure.paint import paint_masks
+
+    info = ClipInfo.load(args.clip_id)
+    out_path = Path(args.out) if args.out else info.dir / "markings.mp4"
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"),
+                             info.fps, (info.width, info.height))
+    if not writer.isOpened():
+        print(f"!! cannot open {out_path} for writing")
+        return 1
+
+    t0, counts, empties = time.time(), [], []
+    for n in range(info.n_frames):
+        bgr = cv2.imread(str(info.frame_path(n)))
+        if bgr is None:
+            break
+        dist, surface = paint_masks(bgr)
+        segs = detect_segments(dist, surface, method=args.method)
+        counts.append(len(segs))
+        if not len(segs):
+            empties.append(n)
+
+        vis = bgr.copy()
+        # The paint mask itself, dim: it shows what the line finder was given, so a frame with no
+        # segments can be told apart from a frame with no paint.
+        vis[(dist == 0) & (surface > 0)] = (0, 200, 255)
+        for s in segs:
+            frac = on_paint_fraction(s, dist)
+            # Green where the segment sits on paint along its whole length, amber where it only
+            # partly does. Amber is where a shadow edge or a net gets in, and it is drawn rather
+            # than filtered so the eye can see how close the threshold is running.
+            col = (80, 255, 80) if frac > 0.85 else (60, 200, 255)
+            cv2.line(vis, (int(s[0]), int(s[1])), (int(s[2]), int(s[3])), col, 2, cv2.LINE_AA)
+        cv2.putText(vis, f"{n:4d}  {len(segs)} lines", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(vis, f"{n:4d}  {len(segs)} lines", (10, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+        writer.write(vis)
+        if n % 25 == 0:
+            print(f"      {n}/{info.n_frames} ...", flush=True)
+    writer.release()
+
+    c = np.asarray(counts)
+    print(f"== {info.clip_id}: {len(counts)} frames in {time.time() - t0:.0f}s "
+          f"({1000 * (time.time() - t0) / max(len(counts), 1):.0f} ms/frame, {args.method})")
+    print(f"   lines per frame: median {np.median(c):.0f}, min {c.min()}, max {c.max()}")
+    print(f"   frames with NO line: {len(empties)}" + (f" {empties[:12]}" if empties else ""))
+    print(f"   -> {out_path}")
+    print("\n   No camera is involved. What you see is what the metric is fed; if a mowing stripe")
+    print("   or a net is drawn here, it is evidence as far as everything downstream is concerned.")
+    return 0
+
+
 def _cmd_list(_args) -> int:
     runs = list_runs()
     if not runs:
@@ -230,6 +296,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("clip_id")
     p.add_argument("--rounds", type=int, default=4, help="ICP rounds for the shared position")
     p.set_defaults(fn=_cmd_fit)
+
+    p = sub.add_parser("markings", help="draw the CV-detected markings over every frame")
+    p.add_argument("clip_id")
+    p.add_argument("--out", help="mp4 path (default: the run's markings.mp4)")
+    p.add_argument("--method", choices=["lsd", "hough"], default="lsd")
+    p.set_defaults(fn=_cmd_markings)
 
     p = sub.add_parser("list", help="what is in runs/")
     p.set_defaults(fn=_cmd_list)

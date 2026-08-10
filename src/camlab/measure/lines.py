@@ -36,6 +36,13 @@ MERGE_OFFSET_PX = 6.0
 #: direction is the *only* thing the vanishing point reads.
 MIN_MERGED_PX = 60.0
 
+#: Applied to LSD's RAW fragments, before merging, and it must stay small. LSD cuts a marking into
+#: many short pieces, so a cut here removes the pieces the merge is supposed to reassemble — set to
+#: 60 px it left frames 41, 43, 50, 66 and 73 of the fan clip with ZERO lines, having thrown away
+#: every fragment of every real marking. The length that matters is the MERGED one, and
+#: `MIN_MERGED_PX` is where it belongs. This only kills single-pixel noise.
+LSD_MIN_LENGTH = 12.0
+
 #: A merged segment must lie on painted centreline over at least this fraction of its length, or it
 #: is not a marking. Hough is happy to draw a line along a player's leg, the goal net or a shadow
 #: edge — all straight, all on the playing surface, none of them paint — and the metric then
@@ -44,12 +51,23 @@ MIN_MERGED_PX = 60.0
 MIN_ON_PAINT = 0.65
 
 
-def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None) -> np.ndarray:
+def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None,
+                    method: str = "lsd") -> np.ndarray:
     """`(N, 4)` segments `[x1, y1, x2, y2]` from a paint distance map.
 
     `dist` is `measure.paint.paint_masks`'s first return: zero on the painted centreline. `surface`
     restricts to the playing area, which keeps advertising boards and the stand's own straight
     edges out — they are excellent straight lines and they belong to no pitch family.
+
+    `method="lsd"` uses OpenCV 5's line segment detector; `"hough"` keeps the probabilistic Hough
+    that came first. Measured on the fan clip, same paint mask, same machine: LSD yields 5-7 merged
+    segments per frame against Hough's 9-14, at 14-21 ms against 9-14 ms. Fewer and cleaner, so it
+    is the default.
+
+    **This choice cannot fix a marking that is not paint.** The mowing-stripe boundary a human
+    caught the metric measuring against is already in `dist` — it is a bright narrow ridge with
+    turf on both sides, which is what `paint_masks` looks for — so it arrives here as evidence and
+    no line finder can tell it apart. See `findings/local-appearance-cannot-find-markings.md`.
     """
     import cv2
 
@@ -59,11 +77,22 @@ def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None) -> np.n
     if not mask.any():
         return np.zeros((0, 4), dtype=float)
 
-    raw = cv2.HoughLinesP(mask, rho=1, theta=np.pi / 360.0, threshold=HOUGH_THRESHOLD,
-                          minLineLength=HOUGH_MIN_LENGTH, maxLineGap=HOUGH_MAX_GAP)
-    if raw is None:
+    if method == "lsd":
+        raw = cv2.createLineSegmentDetector().detect(mask * 255)[0]
+        if raw is None:
+            return np.zeros((0, 4), dtype=float)
+        raw = raw.reshape(-1, 4).astype(float)
+        keep = np.hypot(raw[:, 2] - raw[:, 0], raw[:, 3] - raw[:, 1]) >= LSD_MIN_LENGTH
+        raw = raw[keep]
+    else:
+        found = cv2.HoughLinesP(mask, rho=1, theta=np.pi / 360.0, threshold=HOUGH_THRESHOLD,
+                                minLineLength=HOUGH_MIN_LENGTH, maxLineGap=HOUGH_MAX_GAP)
+        if found is None:
+            return np.zeros((0, 4), dtype=float)
+        raw = found.reshape(-1, 4).astype(float)
+    if not len(raw):
         return np.zeros((0, 4), dtype=float)
-    merged = merge_collinear(raw.reshape(-1, 4).astype(float))
+    merged = merge_collinear(raw)
     return merged[[on_paint_fraction(s, dist) >= MIN_ON_PAINT for s in merged]] \
         if len(merged) else merged
 
