@@ -168,7 +168,7 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
     seg_pts = [np.array([[s[0], s[1]], [s[2], s[3]]]) for s in segments]
     seg_dir = [_unit(p[0], p[1]) for p in seg_pts]
 
-    out: list[LineError] = []
+    model: list = []
     for k, world in straight_markings():
         q = np.column_stack([world, np.ones(2)]) @ h.T
         if np.any(np.abs(q[:, 2]) < 1e-9):
@@ -185,24 +185,104 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
             continue
 
         u = _unit(uv[0], uv[1])
-        best = None
-        for p, v in zip(seg_pts, seg_dir, strict=True):
-            cosang = abs(float(v @ u))
-            if cosang < np.cos(np.radians(match_angle_deg)):
+        cands = []
+        for si, (p, v) in enumerate(zip(seg_pts, seg_dir, strict=True)):
+            if abs(float(v @ u)) < np.cos(np.radians(match_angle_deg)):
                 continue
             off, ang, ov, p1, p2 = compare_line(uv, p)
             if ov < min_overlap * float(np.linalg.norm(uv[1] - uv[0])):
                 continue
             if abs(off) > max_offset_px:
                 continue
-            if best is None or abs(off) < abs(best[0]):
-                best = (off, ang, ov, p1, p2, p)
-        if best is None:
-            out.append(LineError(k, float("nan"), float("nan"), 0.0, uv, None, None, None))
+            cands.append((si, off, ang, ov, p1, p2, p))
+        model.append((k, uv, u, cands))
+
+    return _assign_in_order(model, seg_pts)
+
+
+def _assign_in_order(model, seg_pts):
+    """Choose one segment per model line so the assignment PRESERVES ORDER within each family.
+
+    Picking each line's nearest parallel segment independently is what let a marking measure itself
+    against its neighbour — the same fault as the old metric's nearest-paint, one level up. But
+    parallel markings appear in the image in the same order as in the world, always, so a valid
+    assignment is monotone in the perpendicular coordinate. That constraint is free and it removes
+    the whole failure: a line cannot swap onto its neighbour without its neighbour swapping past
+    it, which a monotone matching forbids.
+
+    Grouped by direction, then a sequence alignment (gaps allowed on both sides, since a marking
+    may be undetected and a detected segment may be no marking of ours) minimising total |offset|.
+    """
+    out: list[LineError] = []
+    used: set[int] = set()
+    # Families: model lines whose image directions agree. A pitch gives two, but a frame that shows
+    # only a corner can give one, and grouping rather than assuming keeps that honest.
+    families: list[list] = []
+    for entry in model:
+        u = entry[2]
+        for fam in families:
+            if abs(float(u @ fam[0][2])) > np.cos(np.radians(MATCH_ANGLE_DEG)):
+                fam.append(entry)
+                break
         else:
-            off, ang, ov, p1, p2, p = best
-            out.append(LineError(k, off, ang, ov, uv, p, p1, p2))
-    return out
+            families.append([entry])
+
+    for fam in families:
+        # Order both sides along the family's shared normal.
+        u0 = fam[0][2]
+        nrm = np.array([-u0[1], u0[0]])
+        fam = sorted(fam, key=lambda e: float(((e[1][0] + e[1][1]) / 2) @ nrm))
+        seg_ids = sorted({c[0] for e in fam for c in e[3]},
+                         key=lambda i: float(((seg_pts[i][0] + seg_pts[i][1]) / 2) @ nrm))
+
+        # Sequence alignment. cost = |offset|; a gap on either side costs a flat penalty, so an
+        # unmatched marking is preferred over a wrong match but not over a plausible one.
+        GAP = float(max_offset_px_default())
+        n_m, n_s = len(fam), len(seg_ids)
+        dp = np.full((n_m + 1, n_s + 1), np.inf)
+        back = np.zeros((n_m + 1, n_s + 1), dtype=np.int8)
+        dp[0, :] = np.arange(n_s + 1) * 0.0            # skipping a detected segment is free
+        for i in range(1, n_m + 1):
+            dp[i, 0] = dp[i - 1, 0] + GAP
+            back[i, 0] = 1
+        for i in range(1, n_m + 1):
+            byseg = {c[0]: c for c in fam[i - 1][3]}
+            for j in range(1, n_s + 1):
+                c = byseg.get(seg_ids[j - 1])
+                take = dp[i - 1, j - 1] + (abs(c[1]) if c is not None else np.inf)
+                skip_m = dp[i - 1, j] + GAP
+                skip_s = dp[i, j - 1]
+                best = min(take, skip_m, skip_s)
+                dp[i, j] = best
+                back[i, j] = 0 if best == take else (1 if best == skip_m else 2)
+
+        i, j = n_m, n_s
+        chosen: dict[int, tuple] = {}
+        while i > 0:
+            if back[i, j] == 0 and j > 0:
+                byseg = {c[0]: c for c in fam[i - 1][3]}
+                c = byseg.get(seg_ids[j - 1])
+                if c is not None:
+                    chosen[fam[i - 1][0]] = c
+                i, j = i - 1, j - 1
+            elif back[i, j] == 1 or j == 0:
+                i -= 1
+            else:
+                j -= 1
+
+        for k, uv, _u, _cands in fam:
+            c = chosen.get(k)
+            if c is None:
+                out.append(LineError(k, float("nan"), float("nan"), 0.0, uv, None, None, None))
+            else:
+                _si, off, ang, ov, p1, p2, p = c
+                used.add(_si)
+                out.append(LineError(k, off, ang, ov, uv, p, p1, p2))
+    return sorted(out, key=lambda e: e.marking)
+
+
+def max_offset_px_default() -> float:
+    return MAX_OFFSET_PX
 
 
 def summarise(errors: list[LineError]) -> dict:

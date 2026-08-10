@@ -36,6 +36,13 @@ MERGE_OFFSET_PX = 6.0
 #: direction is the *only* thing the vanishing point reads.
 MIN_MERGED_PX = 60.0
 
+#: A merged segment must lie on painted centreline over at least this fraction of its length, or it
+#: is not a marking. Hough is happy to draw a line along a player's leg, the goal net or a shadow
+#: edge — all straight, all on the playing surface, none of them paint — and the metric then
+#: measures the camera against a footballer. Measured on the fan clip: real markings score 73-100 %,
+#: the false ones 32 / 41 / 48 %. Nothing observed sits near this line.
+MIN_ON_PAINT = 0.65
+
 
 def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None) -> np.ndarray:
     """`(N, 4)` segments `[x1, y1, x2, y2]` from a paint distance map.
@@ -56,7 +63,27 @@ def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None) -> np.n
                           minLineLength=HOUGH_MIN_LENGTH, maxLineGap=HOUGH_MAX_GAP)
     if raw is None:
         return np.zeros((0, 4), dtype=float)
-    return merge_collinear(raw.reshape(-1, 4).astype(float))
+    merged = merge_collinear(raw.reshape(-1, 4).astype(float))
+    return merged[[on_paint_fraction(s, dist) >= MIN_ON_PAINT for s in merged]] \
+        if len(merged) else merged
+
+
+def on_paint_fraction(seg: np.ndarray, dist: np.ndarray, tol_px: float = 2.0) -> float:
+    """What fraction of a segment's length actually sits on painted centreline.
+
+    Hough only asks whether enough pixels are collinear; it does not ask whether they are paint.
+    A player's leg against grass, the goal net, the edge of a shadow — all straight, all on the
+    playing surface. Without this the metric ends up measuring the camera against a footballer,
+    which is exactly what a human saw it doing.
+    """
+    n = max(20, int(np.hypot(seg[2] - seg[0], seg[3] - seg[1]) / 3))
+    t = np.linspace(0.0, 1.0, n)
+    u = np.rint(seg[0] + t * (seg[2] - seg[0])).astype(int)
+    v = np.rint(seg[1] + t * (seg[3] - seg[1])).astype(int)
+    ok = (u >= 0) & (u < dist.shape[1]) & (v >= 0) & (v < dist.shape[0])
+    if not ok.any():
+        return 0.0
+    return float((dist[v[ok], u[ok]] <= tol_px).mean())
 
 
 def _line_params(seg: np.ndarray) -> tuple[float, float]:
