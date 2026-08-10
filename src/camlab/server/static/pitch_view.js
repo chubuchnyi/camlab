@@ -85,7 +85,11 @@ export function createPitchView(cfg) {
   let clip = null;
   let cam = null;
   let turfMesh = null;      // the double-click raycast target; see onDoubleClick
-  let planeDistance = 40;
+  //: null = auto: put the frame plane where the optical axis actually meets the pitch. A fixed
+  //: default cannot be right — the camera is 78-87 m from what it is looking at on this clip, so
+  //: the 40 m this used to hardcode hung the plane 10.7 m ABOVE the grass and made it look like a
+  //: camera error. A number here is a manual override (the project's auto -> manual rule).
+  let planeOverride = null;
   let frameTex = null;
   let fitPoints = [];
 
@@ -150,6 +154,30 @@ export function createPitchView(cfg) {
     return [(d * clip.width) / (2 * f), (d * clip.height) / (2 * f)];
   }
 
+  /** Where the optical axis crosses the pitch plane Z=0, as a distance along the axis.
+   *
+   * NaN when the axis never gets there — pointing up, or level. That is not a rounding case: a
+   * degenerate frame does exactly this. Fan frame 116 puts the intersection at -0.7 m, i.e.
+   * BEHIND the camera, alongside a 47.7 deg roll and a focal pinned at the search bound.
+   */
+  function groundDistance(i) {
+    if (!applySolvedCamera(i)) return NaN;
+    const fwd = new THREE.Vector3();
+    solved.getWorldDirection(fwd);
+    const cz = cam.position[i][2];
+    if (Math.abs(fwd.z) < 1e-6) return NaN;
+    const t = -cz / fwd.z;
+    return t > 0 ? t : NaN;
+  }
+
+  /** The distance actually used: the manual override, else the ground intersection, else a
+   *  fallback so a degenerate frame still draws something rather than vanishing. */
+  function planeDistanceFor(i) {
+    if (planeOverride != null) return planeOverride;
+    const g = groundDistance(i);
+    return Number.isFinite(g) ? Math.min(Math.max(g, 2), 400) : 40;
+  }
+
   function drawCamera(i) {
     clear(groups.camera);
     if (!applySolvedCamera(i)) return;
@@ -165,7 +193,7 @@ export function createPitchView(cfg) {
     groups.camera.add(body);
 
     // The frustum out to the frame plane, so the plane visibly IS what the camera sees.
-    const d = planeDistance;
+    const d = planeDistanceFor(i);
     const [hw, hh] = frustumHalf(i, d);
     const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
       .map(([x, y]) => solved.localToWorld(new THREE.Vector3(x, y, -d)));
@@ -203,7 +231,7 @@ export function createPitchView(cfg) {
   function drawFramePlane(i) {
     clear(groups.frameplane);
     if (!cam || !frameTex || !(cam.focal_px[i] > 0)) return;
-    const d = planeDistance;
+    const d = planeDistanceFor(i);
     const [hw, hh] = frustumHalf(i, d);
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(2 * hw, 2 * hh),
@@ -461,13 +489,39 @@ export function createPitchView(cfg) {
     drawCamera(i);
     drawFramePlane(i);
     const live = cam.focal_px[i] > 0;
+    // The camera has SEVEN independent degrees of freedom — position (3), orientation (3), focal
+    // (1) — and the panel used to show five numbers, of which one was derived. The three angles
+    // were solved and stored all along and simply never displayed.
+    let yaw = NaN, elev = NaN, roll = NaN;
+    if (live) {
+      const fwd = new THREE.Vector3();
+      solved.getWorldDirection(fwd);
+      const right = new THREE.Vector3().setFromMatrixColumn(solved.matrixWorld, 0);
+      // Readable angles, not an Euler triple: an XYZ decomposition in a Z-up world produces
+      // numbers nobody can check against a photograph.
+      //   yaw  — bearing from +X, counter-clockwise seen from above
+      //   elev — of the optical axis; negative is looking down
+      //   roll — tilt of the horizon; 0 is level, and a handheld phone stays within a few degrees.
+      //          Frame 116's 47.7 deg is the tell that its solve is nonsense.
+      yaw = (Math.atan2(fwd.y, fwd.x) * 180) / Math.PI;
+      elev = (Math.asin(Math.max(-1, Math.min(1, fwd.z))) * 180) / Math.PI;
+      roll = (Math.asin(Math.max(-1, Math.min(1, right.z))) * 180) / Math.PI;
+    }
+    const f = cam.focal_px[i];
     const info = {
       frame: i,
       live,
       degenerate: !!cam.degenerate?.[i],
-      focal_px: cam.focal_px[i],
-      fov_x_deg: live ? (2 * Math.atan(clip.width / (2 * cam.focal_px[i])) * 180) / Math.PI : NaN,
+      focal_px: f,
+      // Derived from the focal and the image size, not free — shown because a human reads angles,
+      // not pixels, and both axes matter on a 16:9 crop.
+      fov_x_deg: live ? (2 * Math.atan(clip.width / (2 * f)) * 180) / Math.PI : NaN,
+      fov_y_deg: live ? (2 * Math.atan(clip.height / (2 * f)) * 180) / Math.PI : NaN,
+      yaw_deg: yaw, elevation_deg: elev, roll_deg: roll,
       position: cam.position[i],
+      ground_distance_m: groundDistance(i),
+      plane_distance_m: planeDistanceFor(i),
+      plane_auto: planeOverride == null,
       frame_url: url,
     };
     onCamera(info);
@@ -476,13 +530,15 @@ export function createPitchView(cfg) {
 
   function setLayer(name, on) { if (groups[name]) groups[name].visible = !!on; }
 
+  /** `d = null` returns to auto. Anything else is a manual override that sticks across frames. */
   function setPlaneDistance(d, i) {
-    planeDistance = Math.max(2, d);
+    planeOverride = d == null ? null : Math.max(2, d);
     if (cam) { drawCamera(i); drawFramePlane(i); }
+    return planeDistanceFor(i);
   }
 
   return {
-    initPitch, loadRun, show, setLayer, setPlaneDistance, frameAll, fly, resize,
+    initPitch, loadRun, show, setLayer, setPlaneDistance, groundDistance, frameAll, fly, resize,
     resetView: frameAll,
     get clip() { return clip; },
     get cam() { return cam; },

@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=5" />
+  <link rel="stylesheet" href="/static/style.css?v=6" />
 </head>
 <body>
 
@@ -56,19 +56,35 @@
     <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
 
     <h2>Frame plane</h2>
+    <label><input type="checkbox" id="planeauto" checked /> auto: where the axis meets the pitch</label>
     <label class="row">distance
-      <input type="range" id="planed" min="5" max="120" step="1" value="40" />
-      <span class="num" id="planedv">40 m</span>
+      <input type="range" id="planed" min="5" max="200" step="1" value="78" />
+      <span class="num" id="planedv">—</span>
     </label>
+    <div class="small muted" id="planenote"></div>
 
     <h2>Camera <span class="muted small" id="model"></span></h2>
     <table id="cam">
-      <tr><th>focal</th><td class="num" id="c-focal">—</td></tr>
-      <tr><th>fov x</th><td class="num" id="c-fov">—</td></tr>
+      <tr class="grp"><td colspan="2">position</td></tr>
       <tr><th>X</th><td class="num" id="c-x">—</td></tr>
       <tr><th>Y</th><td class="num" id="c-y">—</td></tr>
       <tr><th>Z</th><td class="num" id="c-z">—</td></tr>
+      <tr class="grp"><td colspan="2">orientation</td></tr>
+      <tr><th>yaw</th><td class="num" id="c-yaw">—</td></tr>
+      <tr><th>elev</th><td class="num" id="c-elev">—</td></tr>
+      <tr><th>roll</th><td class="num" id="c-roll">—</td></tr>
+      <tr class="grp"><td colspan="2">lens</td></tr>
+      <tr><th>focal</th><td class="num" id="c-focal">—</td></tr>
+      <tr class="drv"><th>fov x</th><td class="num" id="c-fovx">—</td></tr>
+      <tr class="drv"><th>fov y</th><td class="num" id="c-fovy">—</td></tr>
+      <tr class="grp"><td colspan="2">derived</td></tr>
+      <tr class="drv"><th>axis&nbsp;hits</th><td class="num" id="c-ground">—</td></tr>
     </table>
+    <p class="small muted">
+      7 free parameters: position, orientation, focal.
+      <span class="drvkey">grey</span> = derived, not solved.
+      Principal point is fixed at the image centre; no distortion term.
+    </p>
     <div id="c-flag"></div>
 
     <h2>Solve</h2>
@@ -96,7 +112,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=10";
+import { createPitchView } from "/static/pitch_view.js?v=11";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -105,12 +121,31 @@ const view = createPitchView({
   mount: $("view"),
   mountB: $("bcanvas"),
   onCamera: (c) => {
-    $("c-focal").textContent = c.live ? `${c.focal_px.toFixed(0)} px` : "—";
-    $("c-fov").textContent   = c.live ? `${c.fov_x_deg.toFixed(1)}°` : "—";
+    const d = (v, u, n = 2) => (c.live && Number.isFinite(v) ? `${v.toFixed(n)}${u}` : "—");
     const [x, y, z] = c.position;
-    $("c-x").textContent = c.live ? `${x.toFixed(2)} m` : "—";
-    $("c-y").textContent = c.live ? `${y.toFixed(2)} m` : "—";
-    $("c-z").textContent = c.live ? `${z.toFixed(2)} m` : "—";
+    $("c-x").textContent = d(x, " m");
+    $("c-y").textContent = d(y, " m");
+    $("c-z").textContent = d(z, " m");
+    $("c-yaw").textContent  = d(c.yaw_deg, "°", 1);
+    $("c-elev").textContent = d(c.elevation_deg, "°", 1);
+    $("c-roll").textContent = d(c.roll_deg, "°", 1);
+    $("c-focal").textContent = d(c.focal_px, " px", 0);
+    $("c-fovx").textContent  = d(c.fov_x_deg, "°", 1);
+    $("c-fovy").textContent  = d(c.fov_y_deg, "°", 1);
+    $("c-ground").textContent = d(c.ground_distance_m, " m", 1);
+    // A camera whose optical axis never reaches the pitch is not a camera. Say so rather than
+    // print a dash and let it read as a rendering hiccup.
+    $("c-ground").classList.toggle("bad", c.live && !Number.isFinite(c.ground_distance_m));
+    // The roll of a handheld phone stays within a few degrees of level. Anything past 15 is the
+    // solve, not the operator.
+    $("c-roll").classList.toggle("bad", c.live && Math.abs(c.roll_deg) > 15);
+    if (c.plane_auto) {
+      $("planed").value = String(Math.round(c.plane_distance_m));
+      $("planedv").textContent = `${c.plane_distance_m.toFixed(0)} m`;
+      $("planenote").textContent = Number.isFinite(c.ground_distance_m)
+        ? "on the pitch, where this camera is looking"
+        : "axis misses the pitch — fell back to 40 m";
+    }
     $("c-flag").className = c.degenerate ? "flag bad" : (c.live ? "flag ok" : "flag none");
     $("c-flag").textContent = c.degenerate
       ? "rank-poor homography — kept and marked, not trusted"
@@ -177,8 +212,18 @@ for (const k of ["turf", "markings", "goals", "camera", "trajectory", "frameplan
   $(`L-${k}`).onchange = (e) => view.setLayer(k, e.target.checked);
 }
 $("planed").oninput = (e) => {
+  $("planeauto").checked = false;          // touching the slider IS the override
   $("planedv").textContent = `${e.target.value} m`;
+  $("planenote").textContent = "manual override";
   view.setPlaneDistance(+e.target.value, frame);
+};
+$("planeauto").onchange = (e) => {
+  const d = view.setPlaneDistance(e.target.checked ? null : +$("planed").value, frame);
+  $("planed").value = String(Math.round(d));
+  $("planedv").textContent = `${d.toFixed(0)} m`;
+  $("planenote").textContent = e.target.checked ? "on the pitch, where this camera is looking"
+                                                : "manual override";
+  show(frame);
 };
 $("reset").onclick = () => view.frameAll();
 $("prev").onclick = () => { playing = false; show(frame - 1); };
