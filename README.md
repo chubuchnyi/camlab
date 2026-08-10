@@ -92,6 +92,20 @@ that does not open.
 transform. A raw 3×3 from a client can express things that are not a camera, and then "one camera"
 stops being a guarantee.
 
+## What can be trusted here
+
+**camlab's ground truth is the video, not pitch3d's outputs.** Every number inherited from pitch3d
+is a claim until a camlab test measures it against pixels. That is not a posture — in one session
+on this thread, an inherited headline number turned out to be measured in the wrong image space, an
+inherited "this knob was never on" turned out to be on by default at all three layers, and an
+inherited "novel view does not exist for handheld footage" turned out to rest on an analogy rather
+than a measurement, and was refuted.
+
+The register of what was inherited and what has actually been checked is
+[`docs/inherited-claims.md`](docs/inherited-claims.md). Short version today: the geometry is
+verified against a real measurement, the calibration it is fed is only verified to 8 px against
+the painted lines, and the thresholds are not verified at all.
+
 ## Relationship to pitch3d
 
 This is a **copy** of `pitch3d/src/pitch3d/core/`, not a dependency — the camera contract itself has
