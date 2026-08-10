@@ -70,3 +70,18 @@ def test_pitch_is_the_laws_of_the_game_in_metres():
     assert len(up) == 6, "two goal frames + four corner flagposts"
     assert max(float(a[:, 2].max()) for a in up) == 2.44, "goal crossbar height, Law 1"
     assert min(float(a[:, 2].min()) for a in up) == 0.0
+
+
+def test_the_residual_endpoint_is_actually_reachable():
+    """A regression test for a deploy, not for a function.
+
+    The image once shipped without the `[cv]` extra: it started, served the viewer, and returned
+    500 from the one endpoint that answers "is this camera right?". Everything looked fine until
+    someone asked the question. If cv2 is missing here, this fails at import and says so.
+    """
+    import importlib.util
+
+    assert importlib.util.find_spec("cv2") is not None, (
+        "opencv is missing — install with the `[cv]` extra. camlab's ground truth is the paint in "
+        "the frame, and finding it is a cv2 pipeline."
+    )

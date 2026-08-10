@@ -19,7 +19,10 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY calib/ ./calib/
-RUN pip install --no-cache-dir -e .
+# `[cv]`, not bare: camlab's ground truth is the paint in the frame, and finding it is a cv2
+# pipeline. Without the extra the image starts, serves the viewer, and returns 500 from
+# /api/residual — the one endpoint that answers "is this camera right?".
+RUN pip install --no-cache-dir -e ".[cv]"
 
 # Runs are a mounted volume, never baked: rebuilding the image must not throw away measurements.
 VOLUME ["/runs"]
