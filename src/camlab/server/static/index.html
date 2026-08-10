@@ -83,7 +83,8 @@
     <p class="small muted">
       7 free parameters: position, orientation, focal.
       <span class="drvkey">grey</span> = derived, not solved.
-      Principal point is fixed at the image centre; no distortion term.
+      Principal point is <b>assumed</b> at the image centre — PnLCalib measures one and we
+      overwrite it. No distortion term.
     </p>
     <div id="c-flag"></div>
 
@@ -112,7 +113,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=11";
+import { createPitchView } from "/static/pitch_view.js?v=12";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
