@@ -267,6 +267,71 @@ def _cmd_markings(args) -> int:
     return 0
 
 
+def _cmd_refit(args) -> int:
+    """Refit an existing camera, frame by frame, against the LINE metric."""
+    import time
+
+    import cv2
+
+    from camlab.measure.lines import detect_segments
+    from camlab.measure.paint import paint_masks
+    from camlab.solve.refit import refit_frame
+
+    info = ClipInfo.load(args.clip_id)
+    src = info.dir / args.camera
+    if not src.exists():
+        print(f"!! {src} not found")
+        return 1
+    cam = read_camera(src)
+    cx, cy = cam["cx"], cam["cy"]
+    n = len(cam["frames"])
+
+    focal = np.asarray(cam["focal_px"], float).copy()
+    rot = np.asarray(cam["rotation"], float).copy()
+    pos = np.asarray(cam["position"], float).copy()
+    rows, t0 = [], time.time()
+    for i in range(n):
+        if not (focal[i] > 0):
+            continue
+        bgr = cv2.imread(str(info.frame_path(i)))
+        if bgr is None:
+            continue
+        dist, surface = paint_masks(bgr)
+        segs = detect_segments(dist, surface, method=args.method)
+        r = refit_frame(segs, focal[i], rot[i], pos[i], info.width, info.height, cx, cy, frame=i)
+        if r.improved:
+            focal[i], rot[i], pos[i] = r.focal_px, r.rotation, r.position
+        rows.append(r)
+        if i % 20 == 0:
+            print(f"      {i}/{n} ...", flush=True)
+
+    kept = [r for r in rows if r.improved]
+    b = np.array([r.before for r in rows], float)
+    a = np.array([r.after for r in rows], float)
+    out = write_camera(
+        info.dir / args.out, model=f"{cam['model']}+line_refit", clip_id=info.clip_id,
+        width=info.width, height=info.height, frames=np.asarray(cam["frames"], int),
+        focal_px=focal, position=pos, rotation=rot, cx=cx, cy=cy,
+        degenerate=cam.get("degenerate", [False] * n),
+        refit_from=args.camera, refit_accepted=int(len(kept)),
+        notes=("Local refit of every frame against the line metric, with the miss penalty INSIDE "
+               "the objective. A frame is only updated when it improves AND does not lose "
+               "correspondences; otherwise the original is kept."),
+    )
+    print(f"\n== {info.clip_id}: refit {len(rows)} frames in {time.time() - t0:.0f}s")
+    print(f"   accepted {len(kept)}/{len(rows)} (the rest kept their original camera)")
+    print(f"   worst-offset median  {np.nanmedian(b):7.1f} px  ->  {np.nanmedian(a):7.1f} px")
+    print(f"   worst-offset p90     {np.nanpercentile(b, 90):7.1f} px  ->  "
+          f"{np.nanpercentile(a, 90):7.1f} px")
+    if kept:
+        print(f"   camera moved: median {np.median([r.moved_m for r in kept]):.2f} m, "
+              f"focal {np.median([r.d_focal for r in kept]):+.0f} px")
+        print(f"   correspondences: {sum(r.n_before for r in kept)} -> "
+              f"{sum(r.n_after for r in kept)} (must not fall)")
+    print(f"   -> {out}")
+    return 0
+
+
 def _cmd_list(_args) -> int:
     runs = list_runs()
     if not runs:
@@ -313,6 +378,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="mp4 path (default: the run's markings.mp4)")
     p.add_argument("--method", choices=["lsd", "hough"], default="lsd")
     p.set_defaults(fn=_cmd_markings)
+
+    p = sub.add_parser("refit", help="refit a camera against the line metric")
+    p.add_argument("clip_id")
+    p.add_argument("--camera", default="camera_auto.json")
+    p.add_argument("--out", default="camera_refit.json")
+    p.add_argument("--method", choices=["hough", "lsd"], default="hough")
+    p.set_defaults(fn=_cmd_refit)
 
     p = sub.add_parser("list", help="what is in runs/")
     p.set_defaults(fn=_cmd_list)
