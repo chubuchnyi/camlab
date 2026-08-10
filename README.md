@@ -26,7 +26,7 @@ Full spec: `pitch3d/docs/camlab-spec.md`.
 | | | |
 |---|---|---|
 | M-1 | is a fixed camera position defensible for handheld? | **done** — yes |
-| **M0** | **repo, container, port, UI shows the pitch** | **in progress** |
+| **M0** | repo, container, port, UI shows the pitch | **done** — served from the box 2026-08-10 |
 | M1 | clip in → today's free homography → camera, frustum, trajectory, frame plane, camera view | |
 | M1.5 | take PnLCalib's camera directly instead of collapsing it to a homography | |
 | M2 | the PTZ model: one position, per-frame rotation, smooth focal | the point of the repo |
@@ -45,6 +45,23 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 docker build -f docker/Dockerfile -t camlab:m0 .
 docker run --rm -p 8000:8000 -v "$PWD/runs:/runs" camlab:m0
 ```
+
+## On the GPU box
+
+```bash
+bash scripts/deploy.sh          # pack -> ship -> build in WSL -> run detached -> tunnel
+                                # then open http://localhost:8100
+```
+
+**Access is an ssh tunnel, not an open port.** WSL's localhost forwarding does not reach this
+container — measured 2026-08-10, Windows `127.0.0.1:8000` returns 000 while the WSL IP `:8000`
+returns 200 — so the alternative would be `netsh interface portproxy` plus a firewall rule. The
+tunnel needs neither, exposes nothing to the LAN, and survives the thing a portproxy does not: the
+**WSL IP is dynamic and changes when the VM restarts**, so a rule pinned to it silently stops
+working. `deploy.sh` re-reads the IP every time.
+
+The container runs `-d --restart unless-stopped`, not `--rm`: WSL kills anything whose launching
+`wsl.exe` has exited, so the server has to be owned by dockerd.
 
 ## Two rules it keeps
 
