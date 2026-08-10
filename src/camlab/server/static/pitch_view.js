@@ -452,10 +452,10 @@ export function createPitchView(cfg) {
   }
 
   /** Load a run: its clip record and its solve. */
-  async function loadRun(clipId) {
+  async function loadRun(clipId, which = "camera_auto.json") {
     const [runs, camResp] = await Promise.all([
       fetch("/api/runs").then((r) => r.json()),
-      fetch(`/api/run/${clipId}/camera`),
+      fetch(`/api/run/${clipId}/camera?which=${which}`),
     ]);
     clip = runs.find((r) => r.clip_id === clipId);
     if (!clip) throw new Error(`no run ${clipId}`);

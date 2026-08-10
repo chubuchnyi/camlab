@@ -26,6 +26,12 @@ from fastapi.staticfiles import StaticFiles
 
 from camlab import __version__
 from camlab.camera_file import read_camera
+from camlab.core.angles import (
+    angles_from_rotation,
+    matrix_from_rodrigues,
+    rodrigues_from_matrix,
+    rotation_from_angles,
+)
 from camlab.core.pitch import pitch_polylines, pitch_upright_polylines
 from camlab.core.units import FieldDimensions
 from camlab.measure.line_error import line_errors, summarise
@@ -71,6 +77,36 @@ def pitch() -> dict:
     }
 
 
+def _camera_files(info) -> list[str]:
+    return sorted(p.name for p in info.dir.glob("camera_*.json") if "manual" not in p.name)
+
+
+def _load_camera(info, which: str) -> dict:
+    """A solve plus any hand edits laid over it.
+
+    `camera_manual.json` is a separate file and is never merged into the solve on disk. What the
+    algorithm said and what a human corrected stay separable, or in a week nobody can say where a
+    number came from (spec §4.2, ADR-0002).
+    """
+    path = info.dir / which
+    if not path.exists():
+        raise HTTPException(404, f"{info.clip_id} has no {which}")
+    cam = read_camera(path)
+    manual = info.dir / "camera_manual.json"
+    if manual.exists():
+        import json
+        edits = json.loads(manual.read_text()).get(which, {})
+        cam["manual_frames"] = sorted(int(k) for k in edits)
+        for k, v in edits.items():
+            i = int(k)
+            cam["focal_px"][i] = v["focal_px"]
+            cam["rotation"][i] = v["rotation"]
+            cam["position"][i] = v["position"]
+    else:
+        cam["manual_frames"] = []
+    return cam
+
+
 @app.get("/api/runs")
 def runs() -> list[dict]:
     """Every ingested clip, and whether it has been solved."""
@@ -89,7 +125,7 @@ def runs() -> list[dict]:
 
 
 @app.get("/api/run/{clip_id}/camera")
-def camera(clip_id: str) -> dict:
+def camera(clip_id: str, which: str = "camera_auto.json") -> dict:
     """The solve, as written. The viewer draws exactly this — no smoothing, no interpolation.
 
     A frame the solver could not use comes back marked, not removed: `focal_px == 0` and
@@ -97,12 +133,11 @@ def camera(clip_id: str) -> dict:
     is the failure mode R-6 exists to prevent, applied to the camera instead of to a player.
     """
     info = ClipInfo.load(clip_id)
-    path = info.dir / "camera_auto.json"
-    if not path.exists():
-        raise HTTPException(404, f"{clip_id} has no camera_auto.json — run `camlab solve` first")
-    blob = read_camera(path)
+    blob = _load_camera(info, which)
     blob["fps"] = info.fps
     blob["first_frame"] = info.first_frame
+    blob["available"] = _camera_files(info)
+    blob["which"] = which
     return blob
 
 
@@ -127,7 +162,7 @@ _RESIDUAL_CACHE: dict[tuple, dict] = {}
 
 
 @app.get("/api/run/{clip_id}/residual/{n}")
-def residual(clip_id: str, n: int) -> dict:
+def residual(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
     """How far this frame's camera puts the pitch from where the pitch is actually painted.
 
     The number behind window B. `n_scored` is not decoration: only markings that land on the
@@ -135,14 +170,12 @@ def residual(clip_id: str, n: int) -> dict:
     unscoreable and posts a flattering median on the survivors. Read the two together, always.
     """
     info = ClipInfo.load(clip_id)
-    path = info.dir / "camera_auto.json"
-    if not path.exists():
-        raise HTTPException(404, f"{clip_id} has no camera_auto.json")
-    cam = read_camera(path)
+    cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
 
-    key = (clip_id, n, cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
+    key = (clip_id, n, which,
+           cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
     if key not in _RESIDUAL_CACHE:
         r = frame_residual(info.frame_path(n), cam["focal_px"][n], cam["rotation"][n],
                            cam["position"][n], frame=n)
@@ -193,7 +226,8 @@ def paint_png(clip_id: str, n: int) -> Response:
 
 
 @app.get("/api/run/{clip_id}/lines/{n}")
-def lines(clip_id: str, n: int, method: str = "hough") -> dict:
+def lines(clip_id: str, n: int, method: str = "hough",
+          which: str = "camera_auto.json") -> dict:
     """Line-to-line error for one frame, in IMAGE coordinates, ready to draw and to measure.
 
     Everything here is in the pixels of the frame on disk, so the viewer can put it straight into
@@ -203,10 +237,7 @@ def lines(clip_id: str, n: int, method: str = "hough") -> dict:
     import cv2
 
     info = ClipInfo.load(clip_id)
-    path = info.dir / "camera_auto.json"
-    if not path.exists():
-        raise HTTPException(404, f"{clip_id} has no camera_auto.json")
-    cam = read_camera(path)
+    cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
     if not (cam["focal_px"][n] > 0):
@@ -215,7 +246,7 @@ def lines(clip_id: str, n: int, method: str = "hough") -> dict:
 
     if method not in ("hough", "lsd"):
         raise HTTPException(400, "method must be hough or lsd")
-    key = (clip_id, n, method,
+    key = (clip_id, n, method, which,
            cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
     if key in _LINES_CACHE:
         return _LINES_CACHE[key]
@@ -254,6 +285,86 @@ def lines(clip_id: str, n: int, method: str = "hough") -> dict:
     }
     _LINES_CACHE[key] = out
     return out
+
+
+@app.get("/api/run/{clip_id}/manual/{n}")
+def manual_get(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
+    """This frame's camera as READABLE ANGLES, ready to be typed into."""
+    info = ClipInfo.load(clip_id)
+    cam = _load_camera(info, which)
+    if not (0 <= n < len(cam["frames"])):
+        raise HTTPException(404, f"frame {n} outside the clip")
+    yaw, elev, roll = angles_from_rotation(matrix_from_rodrigues(np.asarray(cam["rotation"][n])))
+    x, y, z = cam["position"][n]
+    return {"frame": n, "which": which, "focal_px": cam["focal_px"][n],
+            "x": x, "y": y, "z": z, "yaw": yaw, "elev": elev, "roll": roll,
+            "edited": n in cam.get("manual_frames", [])}
+
+
+@app.post("/api/run/{clip_id}/manual/{n}")
+def manual_set(clip_id: str, n: int, body: dict) -> dict:
+    """Apply a hand edit. The client sends SCALARS; the camera is derived here.
+
+    Never a matrix from the browser: a client-side 3x3 can express things that are not a rotation,
+    and then "this is one camera" stops being a guarantee and becomes a hope. Seven numbers a human
+    can read off the panel go in, and `rotation_from_angles` — round-trip tested — turns them back.
+
+    Writes `camera_manual.json`, keyed by which solve it overlays. The solve on disk is untouched:
+    what the algorithm said and what a human corrected have to stay separable.
+    """
+    import json
+
+    info = ClipInfo.load(clip_id)
+    which = str(body.get("which", "camera_auto.json"))
+    cam = _load_camera(info, which)
+    if not (0 <= n < len(cam["frames"])):
+        raise HTTPException(404, f"frame {n} outside the clip")
+
+    rot = rotation_from_angles(float(body["yaw"]), float(body["elev"]), float(body["roll"]))
+    rvec = rodrigues_from_matrix(rot)
+    pos = [float(body["x"]), float(body["y"]), float(body["z"])]
+    focal = float(body["focal_px"])
+    if not (100.0 < focal < 40000.0):
+        raise HTTPException(400, f"focal {focal} is not a lens on a {info.width} px wide image")
+
+    path = info.dir / "camera_manual.json"
+    blob = json.loads(path.read_text()) if path.exists() else {}
+    edits = blob.setdefault(which, {})
+    scope = body.get("scope", "frame")
+    targets = [n] if scope == "frame" else list(range(len(cam["frames"])))
+    for i in targets:
+        # "clip" scope moves only the POSITION: orientation and focal are per-frame by definition,
+        # and copying one frame's aim to the whole clip would be a different camera, not an edit.
+        prev = edits.get(str(i))
+        if i == n or prev is None:
+            base_r = rvec.tolist() if i == n else list(cam["rotation"][i])
+            base_f = focal if i == n else cam["focal_px"][i]
+        else:
+            base_r, base_f = prev["rotation"], prev["focal_px"]
+        edits[str(i)] = {"focal_px": base_f, "rotation": list(base_r), "position": pos}
+    path.write_text(json.dumps(blob, indent=1))
+    return {"ok": True, "edited_frames": len(edits), "scope": scope}
+
+
+@app.delete("/api/run/{clip_id}/manual/{n}")
+def manual_clear(clip_id: str, n: int, which: str = "camera_auto.json",
+                 scope: str = "frame") -> dict:
+    """Drop hand edits — this frame's, or all of them. The solve underneath is never touched."""
+    import json
+
+    info = ClipInfo.load(clip_id)
+    path = info.dir / "camera_manual.json"
+    if not path.exists():
+        return {"ok": True, "edited_frames": 0}
+    blob = json.loads(path.read_text())
+    edits = blob.get(which, {})
+    if scope == "frame":
+        edits.pop(str(n), None)
+    else:
+        edits = {}
+    blob[which] = edits
+    path.write_text(json.dumps(blob, indent=1))
+    return {"ok": True, "edited_frames": len(edits)}
 
 
 @app.get("/")

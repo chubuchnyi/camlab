@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=9" />
+  <link rel="stylesheet" href="/static/style.css?v=11" />
 </head>
 <body>
 
@@ -65,6 +65,8 @@
   <aside id="panel">
     <h2>Clip</h2>
     <select id="clip"></select>
+    <h2>Camera</h2>
+    <select id="camsel"></select>
 
     <h2>Layers</h2>
     <label><input type="checkbox" id="L-turf"       checked /> turf</label>
@@ -86,16 +88,16 @@
 
     <h2>Camera <span class="muted small" id="model"></span></h2>
     <table id="cam">
-      <tr class="grp"><td colspan="2">position</td></tr>
-      <tr><th>X</th><td class="num" id="c-x">—</td></tr>
-      <tr><th>Y</th><td class="num" id="c-y">—</td></tr>
-      <tr><th>Z</th><td class="num" id="c-z">—</td></tr>
+      <tr class="grp"><td colspan="2">position <span class="muted" id="c-edited"></span></td></tr>
+      <tr><th>X</th><td><input class="ed" id="e-x" type="number" step="0.5" /></td></tr>
+      <tr><th>Y</th><td><input class="ed" id="e-y" type="number" step="0.5" /></td></tr>
+      <tr><th>Z</th><td><input class="ed" id="e-z" type="number" step="0.5" /></td></tr>
       <tr class="grp"><td colspan="2">orientation</td></tr>
-      <tr><th>yaw</th><td class="num" id="c-yaw">—</td></tr>
-      <tr><th>elev</th><td class="num" id="c-elev">—</td></tr>
-      <tr><th>roll</th><td class="num" id="c-roll">—</td></tr>
+      <tr><th>yaw</th><td><input class="ed" id="e-yaw" type="number" step="0.2" /></td></tr>
+      <tr><th>elev</th><td><input class="ed" id="e-elev" type="number" step="0.2" /></td></tr>
+      <tr><th>roll</th><td><input class="ed" id="e-roll" type="number" step="0.2" /></td></tr>
       <tr class="grp"><td colspan="2">lens</td></tr>
-      <tr><th>focal</th><td class="num" id="c-focal">—</td></tr>
+      <tr><th>focal</th><td><input class="ed" id="e-focal" type="number" step="25" /></td></tr>
       <tr class="drv"><th>fov x</th><td class="num" id="c-fovx">—</td></tr>
       <tr class="drv"><th>fov y</th><td class="num" id="c-fovy">—</td></tr>
       <tr class="grp"><td colspan="2">derived</td></tr>
@@ -114,6 +116,17 @@
       overwrite it. No distortion term.
     </p>
     <div id="c-flag"></div>
+    <div id="edtools">
+      <label title="a position edit applies to the whole clip; orientation and focal are per frame">
+        <input type="checkbox" id="e-clip" /> position applies to the whole clip
+      </label>
+      <button id="e-reset">reset this frame to the solve</button>
+      <button id="e-resetall">reset every edit</button>
+      <p class="small muted">
+        Edits go to <b>camera_manual.json</b>, laid over the solve. The solve on disk is never
+        rewritten — what the algorithm said and what you corrected stay separable.
+      </p>
+    </div>
 
     <h2>Solve</h2>
     <div class="small muted" id="solveinfo">—</div>
@@ -140,7 +153,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=14";
+import { createPitchView } from "/static/pitch_view.js?v=15";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -150,14 +163,10 @@ const view = createPitchView({
   mountB: $("bcanvas"),
   onCamera: (c) => {
     const d = (v, u, n = 2) => (c.live && Number.isFinite(v) ? `${v.toFixed(n)}${u}` : "—");
-    const [x, y, z] = c.position;
-    $("c-x").textContent = d(x, " m");
-    $("c-y").textContent = d(y, " m");
-    $("c-z").textContent = d(z, " m");
-    $("c-yaw").textContent  = d(c.yaw_deg, "°", 1);
-    $("c-elev").textContent = d(c.elevation_deg, "°", 1);
-    $("c-roll").textContent = d(c.roll_deg, "°", 1);
-    $("c-focal").textContent = d(c.focal_px, " px", 0);
+    // The editable fields are filled from the SERVER's angles, not from the viewer's own, so
+    // what is typed back is exactly what was read out. Two derivations of the same angle that
+    // agree today are two that can drift apart tomorrow.
+    if (!editing) loadManual(c.frame);
     $("c-fovx").textContent  = d(c.fov_x_deg, "°", 1);
     $("c-fovy").textContent  = d(c.fov_y_deg, "°", 1);
     $("c-ground").textContent = d(c.ground_distance_m, " m", 1);
@@ -165,8 +174,8 @@ const view = createPitchView({
     // print a dash and let it read as a rendering hiccup.
     $("c-ground").classList.toggle("bad", c.live && !Number.isFinite(c.ground_distance_m));
     // The roll of a handheld phone stays within a few degrees of level. Anything past 15 is the
-    // solve, not the operator.
-    $("c-roll").classList.toggle("bad", c.live && Math.abs(c.roll_deg) > 15);
+    // solve, not the operator. The field is editable now, so the warning goes on its border.
+    $("e-roll").classList.toggle("bad", c.live && Math.abs(c.roll_deg) > 15);
     if (c.plane_auto) {
       $("planed").value = String(Math.round(c.plane_distance_m));
       $("planedv").textContent = `${c.plane_distance_m.toFixed(0)} m`;
@@ -189,7 +198,7 @@ const view = createPitchView({
     $("c-resid90").textContent = "";
     $("c-residn").textContent = "";
     const want = c.frame;
-    fetch(`/api/run/${view.clip.clip_id}/residual/${want}`)
+    fetch(`/api/run/${view.clip.clip_id}/residual/${want}?which=${camWhich()}`)
       .then((r) => r.json())
       .then((d) => {
         if (want !== frame) return;            // the scrubber moved on; this answer is stale
@@ -247,6 +256,11 @@ async function openClip(id) {
     (clip.crop ? ` (cropped ${clip.crop.join(",")})` : " (uncropped)") +
     ` · ${clip.n_frames} frames @ ${clip.fps}fps`;
   $("model").textContent = cam.model;
+  if (cam.available && $("camsel").options.length !== cam.available.length) {
+    $("camsel").innerHTML = cam.available
+      .map((f) => `<option value="${f}">${f.replace(/^camera_|\.json$/g, "")}</option>`).join("");
+    $("camsel").value = cam.which;
+  }
   $("bstage").style.aspectRatio = `${clip.width} / ${clip.height}`;
 
   const live = cam.focal_px.filter((f) => f > 0);
@@ -322,8 +336,8 @@ async function drawLineError(n) {
   svg.setAttribute("viewBox", `0 0 ${clip.width} ${clip.height}`);
   let d;
   try {
-    d = await (await fetch(
-      `/api/run/${clip.clip_id}/lines/${n}?method=${$("T-method").value}`)).json();
+    d = await (await fetch(`/api/run/${clip.clip_id}/lines/${n}` +
+      `?method=${$("T-method").value}&which=${camWhich()}`)).json();
   } catch { return; }
   if (d.frame !== frame) return;                 // the scrubber moved on
   lineData = d;
@@ -411,6 +425,72 @@ $("T-ruler").onchange = (e) => $("bsvg").classList.toggle("armed", e.target.chec
   svg.addEventListener("pointerup", end);
   svg.addEventListener("pointercancel", end);
 })();
+
+// ------------------------------------------------------------------- hand controls (#7) -----
+//
+// The browser posts SCALARS. The server turns them into a camera. A 3x3 from a client can express
+// things that are not a rotation, and then "this is one camera" stops being a guarantee.
+let editing = false;
+const EDF = ["x", "y", "z", "yaw", "elev", "roll", "focal"];
+
+async function loadManual(n) {
+  if (!view.clip) return;
+  const r = await fetch(`/api/run/${view.clip.clip_id}/manual/${n}?which=${camWhich()}`);
+  if (!r.ok) return;
+  const d = await r.json();
+  $("e-x").value = d.x.toFixed(2);
+  $("e-y").value = d.y.toFixed(2);
+  $("e-z").value = d.z.toFixed(2);
+  $("e-yaw").value = d.yaw.toFixed(2);
+  $("e-elev").value = d.elev.toFixed(2);
+  $("e-roll").value = d.roll.toFixed(2);
+  $("e-focal").value = d.focal_px.toFixed(0);
+  $("c-edited").textContent = d.edited ? "— edited by hand" : "";
+  $("c-edited").className = d.edited ? "warn" : "muted";
+}
+
+async function pushManual() {
+  if (!view.clip) return;
+  const body = {
+    which: camWhich(), scope: $("e-clip").checked ? "clip" : "frame",
+    x: +$("e-x").value, y: +$("e-y").value, z: +$("e-z").value,
+    yaw: +$("e-yaw").value, elev: +$("e-elev").value, roll: +$("e-roll").value,
+    focal_px: +$("e-focal").value,
+  };
+  const r = await fetch(`/api/run/${view.clip.clip_id}/manual/${frame}`, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  if (!r.ok) { err(`edit rejected: ${(await r.json()).detail || r.status}`); return; }
+  err("");
+  await reloadCamera();          // straight back through the same path any solve takes
+}
+
+for (const k of EDF) {
+  const el = $(`e-${k}`);
+  el.onfocus = () => { editing = true; };
+  el.onblur = () => { editing = false; };
+  // `change`, not `input`: re-measuring is a cv2 pass per keystroke otherwise.
+  el.onchange = () => pushManual();
+}
+$("e-reset").onclick = async () => {
+  await fetch(`/api/run/${view.clip.clip_id}/manual/${frame}?which=${camWhich()}&scope=frame`,
+              {method: "DELETE"});
+  await reloadCamera();
+};
+$("e-resetall").onclick = async () => {
+  await fetch(`/api/run/${view.clip.clip_id}/manual/0?which=${camWhich()}&scope=all`,
+              {method: "DELETE"});
+  await reloadCamera();
+};
+
+function camWhich() { return $("camsel").value || "camera_auto.json"; }
+
+async function reloadCamera() {
+  const keep = frame;
+  await view.loadRun(view.clip.clip_id, camWhich());
+  await show(keep);
+}
+$("camsel").onchange = () => reloadCamera();
 
 // Playback is throttled and gated on the previous frame having landed, so a slow frame slows
 // playback instead of queueing a backlog of them.
