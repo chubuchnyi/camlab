@@ -17,6 +17,8 @@ between them is this number, and no amount of internal consistency elsewhere can
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 #: Paint is a bright ridge with turf on BOTH sides, and that is what separates it from everything
@@ -108,3 +110,36 @@ def paint_masks(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def centreline_pixels(dist: np.ndarray) -> np.ndarray:
     """The painted centreline as ``(N, 2)`` ``(u, v)`` image coordinates."""
     return np.argwhere(dist == 0)[:, ::-1].astype(float)
+
+
+@dataclass(frozen=True)
+class FrameEvidence:
+    """One frame's paint, prepared for repeated queries.
+
+    Building this is the expensive part of any fit — ~0.4 s a frame — and it does not depend on the
+    camera, so it is built once and reused across every ICP round and every model variant. That is
+    what makes an A/B between two camera models cheap enough to actually run.
+    """
+
+    frame: int
+    tree: object          # scipy.spatial.cKDTree over `spine`
+    spine: np.ndarray     # (N, 2) painted centreline pixels, (u, v)
+    surface: np.ndarray   # (H, W) playing-surface mask
+    width: int
+    height: int
+
+
+def frame_evidence(frame_path, frame: int = 0) -> FrameEvidence | None:
+    """Paint evidence for one decoded frame, or None if the frame shows no paint at all."""
+    import cv2
+    from scipy.spatial import cKDTree
+
+    bgr = cv2.imread(str(frame_path))
+    if bgr is None:
+        raise FileNotFoundError(frame_path)
+    dist, surface = paint_masks(bgr)
+    spine = centreline_pixels(dist)
+    if not len(spine):
+        return None
+    h, w = bgr.shape[:2]
+    return FrameEvidence(frame, cKDTree(spine), spine, surface, w, h)

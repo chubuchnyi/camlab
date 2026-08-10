@@ -16,11 +16,12 @@ from pathlib import Path
 
 import numpy as np
 
-from camlab.camera_file import summarise, write_camera
+from camlab.camera_file import read_camera, summarise, write_camera
 from camlab.io.ingest import ingest
 from camlab.io.pitch3d_scene import read_calibration, world_handedness
 from camlab.runs import ClipInfo, list_runs
-from camlab.solve.per_frame import per_frame_cameras
+from camlab.solve.per_frame import PerFrameCameras, per_frame_cameras
+from camlab.solve.ptz import fit_ptz
 
 
 def _cmd_ingest(args) -> int:
@@ -93,6 +94,106 @@ def _cmd_solve(args) -> int:
     return 0
 
 
+def _build_evidence(info, frames):
+    """Paint per frame. The expensive step, and it is camera-independent, so it is done once."""
+    import time
+
+    from camlab.measure.paint import frame_evidence
+
+    ev, t0 = {}, time.time()
+    for n, f in enumerate(frames):
+        e = frame_evidence(info.frame_path(int(f)), int(f))
+        if e is not None:
+            ev[int(f)] = e
+        if n % 20 == 0:
+            print(f"      paint {n}/{len(frames)} ...", flush=True)
+    print(f"   paint evidence: {len(ev)}/{len(frames)} frames in {time.time() - t0:.0f}s")
+    return ev
+
+
+def _cmd_fit(args) -> int:
+    """M2: one position for the clip, per-frame orientation and focal, fitted to the paint."""
+    import time
+
+    from camlab.measure.residual import frame_residual
+
+    info = ClipInfo.load(args.clip_id)
+    auto = read_camera(info.dir / "camera_auto.json")
+    seed = PerFrameCameras(
+        frames=np.asarray(auto["frames"], dtype=int),
+        focal_px=np.asarray(auto["focal_px"], dtype=float),
+        position=np.asarray(auto["position"], dtype=float),
+        rotation=np.asarray(auto["rotation"], dtype=float),
+        zhang_residual=np.asarray(auto.get("zhang_residual", []), dtype=float),
+        degenerate=np.asarray(auto.get("degenerate", []), dtype=bool),
+    )
+    print(f"== {info.clip_id}: fitting one camera to {len(seed)} frames at "
+          f"{info.width}x{info.height}")
+
+    ev = _build_evidence(info, seed.frames)
+    t0 = time.time()
+    fit = fit_ptz(seed, ev, rounds=args.rounds)
+    print(f"   solved in {time.time() - t0:.0f}s over {len(fit.fit_frames)} anchor frames")
+
+    live = fit.focal_px > 0
+    out = write_camera(
+        info.dir / "camera_ptz.json",
+        model="ptz",
+        clip_id=info.clip_id, width=info.width, height=info.height,
+        frames=fit.frames, focal_px=fit.focal_px,
+        # One position, written out T times. The format is per-frame because the FREE model needs
+        # it to be; a model that shares the position says so by repeating itself, which keeps every
+        # reader — the viewer, the residual, a filter — identical for both.
+        position=np.repeat(fit.centre[None], len(fit), axis=0),
+        rotation=fit.rotation,
+        degenerate=(~live).tolist(),
+        anchor_frames=fit.fit_frames.tolist(),
+        centre_seed=fit.centre_seed.round(4).tolist(),
+        stage1_paint_px=round(fit.stage1_px, 3),
+        notes=("ONE optical centre for the whole clip, per-frame rotation and focal, fitted "
+               "directly to the painted lines. The control side is camera_auto.json."),
+    )
+
+    print(f"   centre {np.round(fit.centre, 2).tolist()} m "
+          f"(seed {np.round(fit.centre_seed, 2).tolist()}, moved "
+          f"{np.linalg.norm(fit.centre - fit.centre_seed):.2f} m)")
+    if live.any():
+        print(f"   focal  {fit.focal_px[live].min():.0f}-{fit.focal_px[live].max():.0f} px "
+              f"(x{fit.focal_px[live].max() / fit.focal_px[live].min():.2f})  "
+              f"{int(live.sum())}/{len(fit)} frames solved")
+    print(f"   anchor-frame paint residual: {fit.stage1_px:.2f} px")
+    print(f"   -> {out}")
+
+    # --- the A/B, on the same frames, both scored the same way -------------------------------
+    probe = [int(f) for f in np.asarray(fit.fit_frames)[::max(1, len(fit.fit_frames) // 8)]][:8]
+    print(f"\n   paint residual, free (per-frame) vs ptz (one position), on {len(probe)} frames:")
+    print(f"   {'frame':>6} {'free px':>9} {'n':>6} | {'ptz px':>9} {'n':>6}")
+    fa, fb = [], []
+    for f in probe:
+        i = int(np.flatnonzero(fit.frames == f)[0])
+        a = frame_residual(info.frame_path(f), seed.focal_px[i], seed.rotation[i],
+                           seed.position[i], frame=f)
+        b = frame_residual(info.frame_path(f), fit.focal_px[i], fit.rotation[i],
+                           fit.centre, frame=f)
+        fa.append(a)
+        fb.append(b)
+        print(f"   {f:6d} {a.median_px:9.2f} {a.n:6d} | {b.median_px:9.2f} {b.n:6d}")
+    ma = np.nanmedian([r.median_px for r in fa])
+    mb = np.nanmedian([r.median_px for r in fb])
+    na = sum(r.n for r in fa)
+    nb = sum(r.n for r in fb)
+    print(f"   {'median':>6} {ma:9.2f} {na:6d} | {mb:9.2f} {nb:6d}")
+    if nb < 0.6 * na:
+        print("\n   NO VERDICT: ptz scored on far fewer samples. Those markings did not improve,")
+        print("   they left the frame. Compare coverage before believing any median.")
+    else:
+        d = mb - ma
+        print(f"\n   one position costs {abs(d):.2f} px "
+              f"({'BETTER' if d < 0 else 'worse'} than 8 free DOF per frame), "
+              f"and removes {len(fit)} positions in favour of 1.")
+    return 0
+
+
 def _cmd_list(_args) -> int:
     runs = list_runs()
     if not runs:
@@ -124,6 +225,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("clip_id")
     p.add_argument("--scene", required=True, help="a pitch3d scene.json to read homographies from")
     p.set_defaults(fn=_cmd_solve)
+
+    p = sub.add_parser("fit", help="M2: ONE position for the clip, fitted to the paint")
+    p.add_argument("clip_id")
+    p.add_argument("--rounds", type=int, default=4, help="ICP rounds for the shared position")
+    p.set_defaults(fn=_cmd_fit)
 
     p = sub.add_parser("list", help="what is in runs/")
     p.set_defaults(fn=_cmd_list)
