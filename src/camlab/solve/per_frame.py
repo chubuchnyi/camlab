@@ -68,7 +68,8 @@ def _rodrigues_inv(rot: np.ndarray) -> np.ndarray:
 
 
 def focal_from_one_homography(h_w2i: np.ndarray, width: int, height: int,
-                              n_grid: int = 160) -> tuple[float, float]:
+                              n_grid: int = 160, cx: float | None = None,
+                              cy: float | None = None) -> tuple[float, float]:
     """The focal that best makes ONE homography come from a real rotation. Returns (focal, cost).
 
     Coarse log grid then a golden-section refine. The residual is smooth in `f` but not convex over
@@ -79,7 +80,8 @@ def focal_from_one_homography(h_w2i: np.ndarray, width: int, height: int,
     frame sees little of the pitch. `zhang_residual` is returned so a shallow, untrustworthy answer
     is visible rather than implied.
     """
-    cx, cy = width / 2.0, height / 2.0
+    cx = width / 2.0 if cx is None else float(cx)
+    cy = height / 2.0 if cy is None else float(cy)
 
     def cost(f: float) -> float:
         return _orthonormality(h_w2i, _k_inv(f, cx, cy))
@@ -105,8 +107,8 @@ def focal_from_one_homography(h_w2i: np.ndarray, width: int, height: int,
     return f, cost(f)
 
 
-def per_frame_cameras(h_i2w: np.ndarray, frames: np.ndarray, width: int,
-                      height: int) -> PerFrameCameras:
+def per_frame_cameras(h_i2w: np.ndarray, frames: np.ndarray, width: int, height: int,
+                      cx: float | None = None, cy: float | None = None) -> PerFrameCameras:
     """Decompose each image→world homography into its own camera.
 
     Args:
@@ -117,6 +119,8 @@ def per_frame_cameras(h_i2w: np.ndarray, frames: np.ndarray, width: int,
     """
     h_i2w = np.asarray(h_i2w, dtype=float)
     frames = np.asarray(frames, dtype=int)
+    cx = width / 2.0 if cx is None else float(cx)
+    cy = height / 2.0 if cy is None else float(cy)
     t = len(h_i2w)
 
     det = np.abs(np.linalg.det(h_i2w))
@@ -133,8 +137,8 @@ def per_frame_cameras(h_i2w: np.ndarray, frames: np.ndarray, width: int,
         if not finite[i] or det[i] <= 0.0:
             continue
         h_w2i = np.linalg.inv(h_i2w[i])
-        f, cost = focal_from_one_homography(h_w2i, width, height)
-        rot, tr = _decompose(h_w2i, _k_inv(f, width / 2.0, height / 2.0))
+        f, cost = focal_from_one_homography(h_w2i, width, height, cx=cx, cy=cy)
+        rot, tr = _decompose(h_w2i, _k_inv(f, cx, cy))
         focal[i] = f
         rotation[i] = _rodrigues_inv(rot)
         position[i] = -rot.T @ tr        # world-space optical centre

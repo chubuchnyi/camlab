@@ -64,16 +64,20 @@ def _cmd_solve(args) -> int:
     else:
         odd = np.flatnonzero(mirrored)
 
-    cams = per_frame_cameras(h, frames, info.width, info.height)
+    if args.principal == "axis":
+        cx, cy = info.principal_point
+    else:
+        cx, cy = info.width / 2.0, info.height / 2.0
+    cams = per_frame_cameras(h, frames, info.width, info.height, cx=cx, cy=cy)
     bad = np.flatnonzero(cams.degenerate)
 
     out = write_camera(
-        info.dir / "camera_auto.json",
+        info.dir / (args.out or "camera_auto.json"),
         model="per_frame_homography",
         clip_id=info.clip_id,
         width=info.width, height=info.height,
         frames=cams.frames, focal_px=cams.focal_px,
-        position=cams.position, rotation=cams.rotation,
+        position=cams.position, rotation=cams.rotation, cx=cx, cy=cy,
         zhang_residual=np.where(np.isfinite(cams.zhang_residual),
                                 cams.zhang_residual, -1.0).round(9),
         degenerate=cams.degenerate.astype(bool).tolist(),
@@ -85,6 +89,9 @@ def _cmd_solve(args) -> int:
     )
 
     print(f"== {info.clip_id}: {len(cams)} frames at {info.width}x{info.height}")
+    print(f"   principal point: ({cx:.1f}, {cy:.1f})" +
+          ("  <- the clip's true optical axis" if args.principal == "axis"
+           else "  <- the image centre; wrong on a cropped clip"))
     print(f"   {summarise({'model': 'per_frame_homography', 'position': cams.position.tolist(), 'focal_px': cams.focal_px.tolist()})}")  # noqa: E501
     if odd.size:
         print(f"   handedness minority (kept, marked): {odd.tolist()}")
@@ -290,6 +297,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("solve", help="today's camera: each frame from its own free homography")
     p.add_argument("clip_id")
     p.add_argument("--scene", required=True, help="a pitch3d scene.json to read homographies from")
+    p.add_argument("--principal", choices=["axis", "centre"], default="axis",
+                   help="'axis' uses the clip's real optical axis, which on a cropped clip is NOT "
+                        "the middle of the frames on disk; 'centre' reproduces the old behaviour")
+    p.add_argument("--out", help="output name (default camera_auto.json)")
     p.set_defaults(fn=_cmd_solve)
 
     p = sub.add_parser("fit", help="M2: ONE position for the clip, fitted to the paint")

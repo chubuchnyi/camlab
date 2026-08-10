@@ -36,10 +36,18 @@ def write_camera(
     focal_px: np.ndarray,
     position: np.ndarray,
     rotation: np.ndarray,
+    cx: float | None = None,
+    cy: float | None = None,
     notes: str = "",
     **extra,
 ) -> Path:
-    """Write a solve. `rotation` is Rodrigues, world→camera; `position` is the world centre."""
+    """Write a solve. `rotation` is Rodrigues, world→camera; `position` is the world centre.
+
+    `cx, cy` default to the image centre, which is right only for an uncropped clip. **A camera is
+    valid only with the K it was solved under**, so this is recorded here rather than reconstructed
+    by a reader: swapping in a different principal point later does not adjust the camera, it makes
+    a different one. Every evaluation reads these back.
+    """
     frames = np.asarray(frames, dtype=int)
     payload = {
         "schema": SCHEMA,
@@ -49,8 +57,8 @@ def write_camera(
         # inferred at read time, because inferring it is exactly what goes wrong (see runs.py).
         "width": int(width),
         "height": int(height),
-        "cx": width / 2.0,
-        "cy": height / 2.0,
+        "cx": width / 2.0 if cx is None else float(cx),
+        "cy": height / 2.0 if cy is None else float(cy),
         "frames": frames.tolist(),
         "focal_px": np.asarray(focal_px, dtype=float).round(4).tolist(),
         "position": np.asarray(position, dtype=float).round(5).tolist(),
