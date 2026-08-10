@@ -180,3 +180,56 @@ def test_unmatched_samples_are_reported_not_absorbed(fan):
                            cam["position"][30], frame=30, match_px=10_000.0)
     assert loose.n_unmatched == 0
     assert loose.n > r.n, "a looser bound absorbs them into the score instead of reporting them"
+
+
+class TestParallelFamiliesComeFromTheWorld:
+    """Grouping parallel markings by their IMAGE direction is order-dependent and breaks.
+
+    Perspective spreads a parallel family apart: on real frames of the fan clip markings 1, 8 and
+    11 — parallel in the world — span 22.1 to 32.5 degrees in the image, eleven degrees against an
+    8 degree threshold. A greedy first-fit grouping then puts them in different families depending
+    on the order they are visited, and the order-preserving assignment cannot forbid two of them
+    from claiming the same detected segment. A human saw exactly that on frames 16 and 18.
+    """
+
+    def test_a_pitch_has_exactly_two_families(self):
+        import collections
+
+        from camlab.measure.line_error import straight_markings, world_family
+        fam = collections.defaultdict(list)
+        for k, world in straight_markings():
+            fam[world_family(world)].append(k)
+        assert len(fam) == 2, f"a rectangular pitch has two, got {dict(fam)}"
+        assert all(len(v) >= 5 for v in fam.values()), "neither family should be a stray"
+
+    def test_the_two_families_are_perpendicular(self):
+        from camlab.measure.line_error import straight_markings, world_family
+        dirs = {0: [], 1: []}
+        for _k, world in straight_markings():
+            d = world[1] - world[0]
+            dirs[world_family(world)].append(np.degrees(np.arctan2(d[1], d[0])) % 180.0)
+        a = np.median([min(x, 180 - x) for x in dirs[0]])
+        b = np.median([min(x, 180 - x) for x in dirs[1]])
+        assert a < 10 and b > 80, f"families should be ~0 and ~90 deg apart, got {a:.0f}, {b:.0f}"
+
+    @pytest.mark.skipif(not (runs_root() / "fan").exists(), reason="needs the ingested `fan` run")
+    def test_no_two_markings_claim_the_same_detected_line(self, fan):
+        """The invariant the whole assignment exists to enforce, on the frames it failed on."""
+        import collections
+
+        import cv2
+
+        from camlab.measure.line_error import line_errors
+        from camlab.measure.lines import detect_segments
+        from camlab.measure.paint import paint_masks
+        info, cam = fan
+        for f in (16, 17, 18, 30):
+            bgr = cv2.imread(str(info.frame_path(f)))
+            dist, surface = paint_masks(bgr)
+            errs = line_errors(detect_segments(dist, surface), cam["focal_px"][f],
+                               cam["rotation"][f], cam["position"][f],
+                               info.width, info.height, cx=cam["cx"], cy=cam["cy"])
+            seen = collections.Counter(
+                tuple(np.round(e.found_uv.ravel(), 1)) for e in errs if e.matched)
+            dupes = {k: c for k, c in seen.items() if c > 1}
+            assert not dupes, f"frame {f}: {len(dupes)} segment(s) claimed twice"

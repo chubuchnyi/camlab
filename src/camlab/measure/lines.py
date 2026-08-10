@@ -52,17 +52,29 @@ MIN_ON_PAINT = 0.65
 
 
 def detect_segments(dist: np.ndarray, surface: np.ndarray | None = None,
-                    method: str = "lsd") -> np.ndarray:
+                    method: str = "hough") -> np.ndarray:
     """`(N, 4)` segments `[x1, y1, x2, y2]` from a paint distance map.
 
     `dist` is `measure.paint.paint_masks`'s first return: zero on the painted centreline. `surface`
     restricts to the playing area, which keeps advertising boards and the stand's own straight
     edges out — they are excellent straight lines and they belong to no pitch family.
 
-    `method="lsd"` uses OpenCV 5's line segment detector; `"hough"` keeps the probabilistic Hough
-    that came first. Measured on the fan clip, same paint mask, same machine: LSD yields 5-7 merged
-    segments per frame against Hough's 9-14, at 14-21 ms against 9-14 ms. Fewer and cleaner, so it
-    is the default.
+    `"hough"` is the probabilistic Hough transform; `"lsd"` is OpenCV 5's line segment detector.
+    **Hough is the default, measured over 40 frames of the fan clip on the same paint mask** — the
+    decisive number being paint coverage, the share of painted centreline pixels lying under some
+    detected segment, which needs no camera and so cannot be won by luck:
+
+    ===================  ======  =========  =========
+    ..                   Hough   LSD thin   LSD band
+    lines/frame median      16          8          8
+    paint covered        46.6 %     26.7 %     24.4 %
+    worst frame          37.0 %     12.6 %     10.1 %
+    on-paint median       0.96       0.94       0.90
+    ms/frame                49         60         59
+    ===================  ======  =========  =========
+
+    I briefly made LSD the default on the grounds that it returned fewer segments and was therefore
+    "cleaner", without checking whether what went missing was real. It was: half the paint coverage.
 
     **This choice cannot fix a marking that is not paint.** The mowing-stripe boundary a human
     caught the metric measuring against is already in `dist` — it is a bright narrow ridge with

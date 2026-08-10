@@ -83,6 +83,24 @@ class LineError:
         return self.found_uv is not None
 
 
+def world_family(world: np.ndarray, tol_deg: float = 5.0) -> int:
+    """Which parallel family a marking belongs to, decided in the WORLD where it is exact.
+
+    Not in the image. Perspective spreads a parallel family's image directions apart — markings 1,
+    8 and 11 of this pitch span 22.1 deg to 32.5 deg on one real frame, eleven degrees, against an
+    8 deg threshold. Grouping on that is order-dependent: the first two agree, the third does not,
+    and which family it lands in depends on the order they were visited. Two members of one world
+    family then end up in different image families, where the order-preserving assignment cannot
+    see them — and two model lines can claim the same detected segment, which is what a human saw
+    on frames 16 and 18.
+
+    A pitch has exactly two families and the world says which is which, exactly, for free.
+    """
+    d = world[1] - world[0]
+    ang = float(np.degrees(np.arctan2(d[1], d[0]))) % 180.0
+    return 0 if min(ang, 180.0 - ang) < 45.0 else 1
+
+
 def straight_markings() -> list[tuple[int, np.ndarray]]:
     """`(index, (2, 2) world endpoints)` for every marking that is straight in the world.
 
@@ -195,7 +213,7 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
             if abs(off) > max_offset_px:
                 continue
             cands.append((si, off, ang, ov, p1, p2, p))
-        model.append((k, uv, u, cands))
+        model.append((k, uv, u, cands, world_family(world)))
 
     return _assign_in_order(model, seg_pts)
 
@@ -215,17 +233,12 @@ def _assign_in_order(model, seg_pts):
     """
     out: list[LineError] = []
     used: set[int] = set()
-    # Families: model lines whose image directions agree. A pitch gives two, but a frame that shows
-    # only a corner can give one, and grouping rather than assuming keeps that honest.
-    families: list[list] = []
+    # Grouped by WORLD direction, which is exact, rather than by image direction, which perspective
+    # smears across more than the threshold. See `world_family`.
+    by_family: dict[int, list] = {}
     for entry in model:
-        u = entry[2]
-        for fam in families:
-            if abs(float(u @ fam[0][2])) > np.cos(np.radians(MATCH_ANGLE_DEG)):
-                fam.append(entry)
-                break
-        else:
-            families.append([entry])
+        by_family.setdefault(entry[4], []).append(entry)
+    families = list(by_family.values())
 
     for fam in families:
         # Order both sides along the family's shared normal.
@@ -270,7 +283,7 @@ def _assign_in_order(model, seg_pts):
             else:
                 j -= 1
 
-        for k, uv, _u, _cands in fam:
+        for k, uv, _u, _cands, _fk in fam:
             c = chosen.get(k)
             if c is None:
                 out.append(LineError(k, float("nan"), float("nan"), 0.0, uv, None, None, None))
