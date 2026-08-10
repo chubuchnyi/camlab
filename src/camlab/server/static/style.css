@@ -1,0 +1,35 @@
+/* Bump the ?v= token in index.html on every edit here, or the browser verifies the OLD
+   stylesheet — a trap that cost pitch3d a review round more than once. */
+:root { color-scheme: dark; --panel: 230px; }
+html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
+             font: 13px/1.45 system-ui, sans-serif; overflow: hidden; }
+#app { position: absolute; inset: 0; display: flex; }
+#view { flex: 1; min-width: 0; position: relative; }
+/* Absolute, not in flow. A canvas sized to its parent while the parent is sized by its canvas
+   is a feedback loop: the first paint came out with the pitch off-screen and the side panel
+   pushed out of the window entirely. Taking the canvas out of the flow breaks the cycle. */
+#view canvas { position: absolute; inset: 0; display: block; }
+
+/* Above the canvas. The canvas is appended by JS, so it comes LAST in the DOM and — both being
+   absolutely positioned with no z-index — painted over the HUD. */
+#hud { position: absolute; top: 10px; left: 12px; z-index: 2; pointer-events: none;
+       text-shadow: 0 1px 2px #000; }
+#err { color: #ff8f8f; margin-top: 4px; max-width: 60ch; }
+.muted { color: #8b929e; }
+.small { font-size: 11px; }
+
+#panel { width: var(--panel); flex: 0 0 var(--panel); background: #1b1e23;
+         border-left: 1px solid #2b2f36; padding: 12px 14px; overflow-y: auto;
+         box-sizing: border-box; }
+#panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+            color: #8b929e; margin: 18px 0 8px; font-weight: 600; }
+#panel h2:first-child { margin-top: 0; }
+#panel label { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; }
+#panel label.off { color: #5c636e; cursor: default; }
+.soon { margin-left: auto; font-size: 10px; color: #4a90d9; border: 1px solid #2f4a6b;
+        border-radius: 3px; padding: 0 4px; }
+#panel button { background: #262a31; color: #d7dae0; border: 1px solid #363b44;
+                border-radius: 4px; padding: 5px 10px; cursor: pointer; font: inherit; width: 100%; }
+#panel button:hover { background: #2f343c; }
+#panel p { margin: 8px 0 0; }
+kbd { background: #262a31; border: 1px solid #363b44; border-radius: 3px; padding: 0 4px; }

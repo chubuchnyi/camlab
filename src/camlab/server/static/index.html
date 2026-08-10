@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>camlab</title>
+  <!-- Vendored, not CDN. See server/app.py for why, and vendor/SHA256SUMS for what. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three.module.js",
+      "three/addons/controls/OrbitControls.js": "/static/vendor/OrbitControls.js",
+      "three/addons/controls/TransformControls.js": "/static/vendor/TransformControls.js"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=3" />
+</head>
+<body>
+
+<div id="app">
+  <div id="view">
+    <div id="hud">
+      <b>camlab</b> <span class="muted">M0 — pitch only. No clip loaded.</span>
+      <div class="muted" id="stat">loading…</div>
+      <div id="err"></div>
+    </div>
+  </div>
+
+  <aside id="panel">
+    <h2>Layers</h2>
+    <label><input type="checkbox" id="L-turf"     checked /> turf</label>
+    <label><input type="checkbox" id="L-markings" checked /> markings</label>
+    <label><input type="checkbox" id="L-goals"    checked /> goals + flags</label>
+    <label class="off"><input type="checkbox" disabled /> camera <span class="soon">M1</span></label>
+    <label class="off"><input type="checkbox" disabled /> trajectory <span class="soon">M1</span></label>
+    <label class="off"><input type="checkbox" disabled /> frame plane <span class="soon">M1</span></label>
+    <label class="off"><input type="checkbox" disabled /> players <span class="soon">M4</span></label>
+    <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
+
+    <h2>View</h2>
+    <button id="reset">reset view</button>
+    <p class="muted small">
+      drag: orbit · right-drag: pan · wheel: zoom · <kbd>F</kbd>: frame all
+    </p>
+
+    <h2>World</h2>
+    <div class="small muted" id="worldinfo">—</div>
+  </aside>
+</div>
+
+<script type="module">
+import { createPitchView } from "/static/pitch_view.js?v=4";
+
+const $ = (id) => document.getElementById(id);
+
+const view = createPitchView({
+  mount: $("view"),
+  onStatus: (m) => { $("stat").textContent = m; },
+  onError:  (m) => { $("err").textContent = m || ""; },
+});
+
+for (const key of ["turf", "markings", "goals"]) {
+  $(`L-${key}`).onchange = (e) => view.setLayer(key, e.target.checked);
+}
+$("reset").onclick = () => view.resetView();
+
+(async function main() {
+  try {
+    const info = await view.init();
+    $("worldinfo").innerHTML =
+      `${info.length} &times; ${info.width} m<br>` +
+      `${info.markings} marking polylines<br>` +
+      `${info.uprights} uprights (goals + flags)<br>` +
+      `Z-up, right-handed, origin = centre spot`;
+  } catch (e) {
+    $("err").textContent = "failed to load: " + (e.message || e);
+    $("stat").textContent = "";
+  }
+})();
+</script>
+</body>
+</html>
