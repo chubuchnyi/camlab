@@ -114,7 +114,8 @@ def _build_samples() -> None:
 
 
 def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
-                   width: int, height: int) -> np.ndarray:
+                   width: int, height: int,
+                   cx: float | None = None, cy: float | None = None) -> np.ndarray:
     """The ``(3, 3)`` world→image map on the pitch plane Z=0, for one camera.
 
     Takes the camera as camlab stores it — focal, Rodrigues world→camera rotation, and the optical
@@ -127,13 +128,19 @@ def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
         k = np.asarray(rvec, dtype=float) / theta
         kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
         rot = np.eye(3) + np.sin(theta) * kx + (1 - np.cos(theta)) * (kx @ kx)
-    kmat = np.array([[focal, 0.0, width / 2.0], [0.0, focal, height / 2.0], [0.0, 0.0, 1.0]])
+    # The principal point is a PARAMETER, not the image centre. On a cropped clip the optical axis
+    # is not at the middle of the frames on disk — this project's fan clip has it 638 px away — and
+    # hardcoding width/2, height/2 here meant every paint number in the repo used the wrong K.
+    cx = width / 2.0 if cx is None else cx
+    cy = height / 2.0 if cy is None else cy
+    kmat = np.array([[focal, 0.0, cx], [0.0, focal, cy], [0.0, 0.0, 1.0]])
     t = -rot @ np.asarray(centre, dtype=float)
     return kmat @ np.column_stack([rot[:, 0], rot[:, 1], t])
 
 
 def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
-                   match_px: float = 40.0) -> Residual:
+                   match_px: float = 40.0,
+                   cx: float | None = None, cy: float | None = None) -> Residual:
     """Score one camera against one decoded frame.
 
     `frame_path` must be a frame written by `camlab ingest`, i.e. already cropped — the same image
@@ -164,7 +171,7 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     tree = cKDTree(spine)
 
     xy1 = _marking_samples()
-    h = world_to_image(focal, rvec, centre, width, height)
+    h = world_to_image(focal, rvec, centre, width, height, cx=cx, cy=cy)
     q = xy1 @ h.T
     w = np.where(np.abs(q[:, 2]) > 1e-9, q[:, 2], 1e-9)
     uv = q[:, :2] / w[:, None]

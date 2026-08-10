@@ -21,11 +21,17 @@ def test_the_page_never_reaches_the_network():
     open without internet — that is the defect this repo does not inherit, and a test is the only
     thing that keeps it from creeping back in one `<script src=…>` at a time.
     """
+    # The SVG namespace is an XML IDENTIFIER, not an address: createElementNS never fetches it,
+    # and a page using it works with the network unplugged. Allowed by exact string, not by a
+    # pattern — "anything on w3.org" would also allow a stylesheet, which would be a real fetch.
+    ALLOWED = {"http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml"}
     offenders = []
     for f in STATIC.rglob("*"):
         if f.suffix.lower() not in {".html", ".js", ".css"} or "vendor" in f.parts:
             continue
         for m in re.finditer(r"https?://[^\s\"'()]+", f.read_text(encoding="utf-8")):
+            if m.group(0) in ALLOWED:
+                continue
             offenders.append(f"{f.relative_to(STATIC)}: {m.group(0)}")
     assert not offenders, "front end reaches the network:\n" + "\n".join(offenders)
 

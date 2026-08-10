@@ -28,6 +28,9 @@ from camlab import __version__
 from camlab.camera_file import read_camera
 from camlab.core.pitch import pitch_polylines, pitch_upright_polylines
 from camlab.core.units import FieldDimensions
+from camlab.measure.line_error import line_errors, summarise
+from camlab.measure.lines import detect_segments
+from camlab.measure.paint import paint_masks
 from camlab.measure.residual import frame_residual
 from camlab.runs import ClipInfo, list_runs
 
@@ -159,6 +162,69 @@ def residual(clip_id: str, n: int) -> dict:
             "coverage": round(r.coverage, 4),
         }
     return _RESIDUAL_CACHE[key]
+
+
+_LINES_CACHE: dict[tuple, dict] = {}
+
+
+@app.get("/api/run/{clip_id}/lines/{n}")
+def lines(clip_id: str, n: int) -> dict:
+    """Line-to-line error for one frame, in IMAGE coordinates, ready to draw and to measure.
+
+    Everything here is in the pixels of the frame on disk, so the viewer can put it straight into
+    an SVG over the photograph and a ruler dropped on `p1`..`p2` reads `offset_px` exactly. That is
+    the property the previous metric lacked: a number nobody could check against the screen.
+    """
+    import cv2
+
+    info = ClipInfo.load(clip_id)
+    path = info.dir / "camera_auto.json"
+    if not path.exists():
+        raise HTTPException(404, f"{clip_id} has no camera_auto.json")
+    cam = read_camera(path)
+    if not (0 <= n < len(cam["frames"])):
+        raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
+    if not (cam["focal_px"][n] > 0):
+        return {"frame": n, "lines": [], "segments": [], "summary": None,
+                "note": "no camera for this frame"}
+
+    key = (clip_id, n, cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
+    if key in _LINES_CACHE:
+        return _LINES_CACHE[key]
+
+    bgr = cv2.imread(str(info.frame_path(n)))
+    if bgr is None:
+        raise HTTPException(404, f"{clip_id} frame {n} not decoded")
+    dist, surface = paint_masks(bgr)
+    segs = detect_segments(dist, surface)
+    # The principal point the camera was SOLVED under, from the camera file — not the clip's true
+    # optical axis. A camera is only valid with its own K; swapping one in makes a different camera
+    # and every offset below would be measuring that instead.
+    errs = line_errors(segs, cam["focal_px"][n], cam["rotation"][n], cam["position"][n],
+                       info.width, info.height, cx=cam["cx"], cy=cam["cy"])
+    out = {
+        "frame": n,
+        "width": info.width, "height": info.height,
+        "segments": [[round(v, 1) for v in s] for s in segs.tolist()],
+        "lines": [
+            {
+                "marking": e.marking,
+                "model": [[round(v, 1) for v in p] for p in e.model_uv.tolist()],
+                "found": None if e.found_uv is None
+                         else [[round(v, 1) for v in p] for p in e.found_uv.tolist()],
+                "offset_px": None if not e.matched else round(e.offset_px, 1),
+                "angle_deg": None if not e.matched else round(e.angle_deg, 2),
+                "overlap_px": round(e.overlap_px, 1),
+                "p1": None if e.p1_uv is None else [round(v, 1) for v in e.p1_uv.tolist()],
+                "p2": None if e.p2_uv is None else [round(v, 1) for v in e.p2_uv.tolist()],
+            }
+            for e in errs
+        ],
+        "summary": {k: (None if isinstance(v, float) and v != v else v)
+                    for k, v in summarise(errs).items()},
+    }
+    _LINES_CACHE[key] = out
+    return out
 
 
 @app.get("/")
