@@ -60,13 +60,15 @@ def test_a_frame_with_no_camera_scores_nothing_rather_than_zero(fan):
 
 def test_compare_refuses_when_coverage_collapses():
     """The exact failure that produced a confident wrong verdict in pitch3d's first probe."""
-    good = Residual(0, 8.0, 20.0, n=1400, n_projected=1400)
-    runaway = Residual(0, 2.0, 5.0, n=30, n_projected=30)   # "better" median, 2% of the samples
+    good = Residual(0, 8.0, 20.0, 30.0, 12.0, {}, n=1400, n_projected=1400, n_unmatched=0)
+    # "better" median on 2% of the samples — the shape of every wrong verdict in this repo so far
+    runaway = Residual(0, 2.0, 5.0, 8.0, 3.0, {}, n=30, n_projected=30, n_unmatched=0)
     verdict = compare(good, runaway)
     assert "no verdict" in verdict
     assert "out of frame" in verdict
     # And a fair pair still gets a verdict.
-    assert "no verdict" not in compare(good, Residual(0, 4.0, 9.0, 1350, 1350))
+    fair = Residual(0, 4.0, 9.0, 14.0, 6.0, {}, n=1350, n_projected=1350, n_unmatched=0)
+    assert "no verdict" not in compare(good, fair)
 
 
 def test_world_to_image_round_trips_a_known_camera():
@@ -143,3 +145,38 @@ class TestPixelMotionAgainstKnownAnswers:
         rot = self._rot([0.2, 1.0, 0.3], 8.0)
         h = self._k(2400.0) @ (rot + np.outer([2.0, 0, 0], [0, 0, 1.0]) / 60.0) @ self._kinv(2400.0)
         assert self._score(h) > 1.0, "parallax must not be absorbable by any focal pair"
+
+
+def test_the_worst_line_sees_what_a_pooled_median_cannot(fan):
+    """A human looked at an overlay and said some markings fit while their parallels are far off.
+
+    The pooled median cannot show that — the lines that fit outvote the lines that do not — and it
+    is the characteristic failure, because a projected line drifting onto a NEIGHBOURING parallel
+    line finds paint at almost zero distance and scores perfect.
+
+    Measured on frame 0: the two long sides of the penalty box, both running along X and parallel
+    to each other, come back at 29.9 px and 2.9 px. The median over everything is 7.3 px and shows
+    neither.
+    """
+    r = _score(fan, 0)
+    assert r.worst_line_px > 3 * r.median_px, (
+        "if the worst marking is not far worse than the pooled median on this frame, either the "
+        "clip changed or the per-line split stopped working"
+    )
+    solid = {k: v for k, v in r.per_line.items() if v[1] >= 8}
+    assert len(solid) >= 5, "need several markings with real support to make the split meaningful"
+    spread = max(v[0] for v in solid.values()) / min(v[0] for v in solid.values())
+    assert spread > 5, f"markings should disagree by a lot on this camera, got {spread:.1f}x"
+
+
+def test_unmatched_samples_are_reported_not_absorbed(fan):
+    """Unbounded nearest-paint let a marking with no paint near it borrow a distance from across
+    the frame. Bounded, those become a COUNT, which a median cannot dilute."""
+    info, cam = fan
+    r = frame_residual(info.frame_path(30), cam["focal_px"][30], cam["rotation"][30],
+                       cam["position"][30], frame=30, match_px=40.0)
+    assert r.n_unmatched > 0, "frame 30 has markings the frame shows no paint for"
+    loose = frame_residual(info.frame_path(30), cam["focal_px"][30], cam["rotation"][30],
+                           cam["position"][30], frame=30, match_px=10_000.0)
+    assert loose.n_unmatched == 0
+    assert loose.n > r.n, "a looser bound absorbs them into the score instead of reporting them"

@@ -145,10 +145,17 @@ def residual(clip_id: str, n: int) -> dict:
                            cam["position"][n], frame=n)
         _RESIDUAL_CACHE[key] = {
             "frame": r.frame,
+            # worst_line_px first, because it is the verdict. A pooled median cannot show a camera
+            # sitting on one family of lines while the family parallel to it is metres off, and
+            # that is the failure a human spotted in the overlay while the median read 7 px.
+            "worst_line_px": None if r.n == 0 else round(r.worst_line_px, 2),
             "median_px": None if r.n == 0 else round(r.median_px, 2),
             "p90_px": None if r.n == 0 else round(r.p90_px, 2),
+            "max_px": None if r.n == 0 else round(r.max_px, 2),
+            "per_line": {str(k): [round(v[0], 2), v[1]] for k, v in r.per_line.items()},
             "n_scored": r.n,
             "n_projected": r.n_projected,
+            "n_unmatched": r.n_unmatched,
             "coverage": round(r.coverage, 4),
         }
     return _RESIDUAL_CACHE[key]

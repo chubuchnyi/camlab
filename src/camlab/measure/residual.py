@@ -37,20 +37,36 @@ SAMPLES_PER_M = 2.0
 class Residual:
     """One frame's agreement with the paint.
 
+    **Read `worst_line_px` first.** The median was the headline until a human looked at an overlay
+    and said the obvious thing: some markings sit on their paint while the ones parallel to them
+    are far off. A median over all samples cannot show that — the lines that fit outvote the lines
+    that do not — and the failure it hides is the characteristic one, because a projected line that
+    drifts onto a NEIGHBOURING parallel line finds paint at almost zero distance and scores as
+    perfect. Per marking, that is visible. Pooled, it is not.
+
     Attributes:
         frame: Frame index.
-        median_px: Median distance from a projected marking to the nearest painted centreline.
-        p90_px: The tail. A camera can sit on the halfway line and miss the goal area entirely.
-        n: How many marking samples were scored — **read this with the median, never without.**
-        n_projected: How many landed inside the image at all. `n_projected - n` is how much of the
-            pitch this camera puts somewhere the frame cannot judge.
+        median_px: Median over all scored samples. Kept for continuity, no longer the verdict.
+        p90_px, max_px: The tail, and the worst single sample.
+        worst_line_px: The **worst marking's own median**. The number to quote.
+        per_line: `{marking index: (median px, samples)}`, so "which line is wrong" is answerable.
+        n: Samples scored. Read with any median, never without.
+        n_projected: Samples that landed in the image at all.
+        n_unmatched: Samples inside the image with **no paint within `match_px`**. These are not
+            "large errors" that a median can absorb — they are markings the frame shows nothing
+            for, and they used to be silently assigned the distance to whatever paint happened to
+            be nearest, however far and however wrong.
     """
 
     frame: int
     median_px: float
     p90_px: float
+    max_px: float
+    worst_line_px: float
+    per_line: dict
     n: int
     n_projected: int
+    n_unmatched: int
 
     @property
     def coverage(self) -> float:
@@ -63,20 +79,38 @@ _CACHE: dict[str, np.ndarray] = {}
 
 def _marking_samples() -> np.ndarray:
     """Every painted marking, resampled evenly, as world ``(X, Y, 1)``."""
-    if "xy1" not in _CACHE:
-        out = []
-        for poly in pitch_polylines():
-            xy = np.asarray(poly, dtype=float)[:, :2]
-            if len(xy) < 2:
-                continue                       # the spots are points, not lines
-            seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
-            run = np.concatenate([[0.0], np.cumsum(seg)])
-            n = max(2, int(run[-1] * SAMPLES_PER_M))
-            want = np.linspace(0.0, run[-1], n)
-            out.append(np.column_stack([np.interp(want, run, xy[:, i]) for i in (0, 1)]))
-        pts = np.concatenate(out)
-        _CACHE["xy1"] = np.column_stack([pts, np.ones(len(pts))])
+    _build_samples()
     return _CACHE["xy1"]
+
+
+def _marking_owner() -> np.ndarray:
+    """Which marking each sample came from — its index into ``pitch_polylines()``.
+
+    Kept because pooling every sample into one median is what hid the characteristic failure: a
+    camera can sit on one family of lines while the family parallel to it is metres off, and the
+    lines that fit outvote the lines that do not.
+    """
+    _build_samples()
+    return _CACHE["owner"]
+
+
+def _build_samples() -> None:
+    if "xy1" in _CACHE:
+        return
+    out, owner = [], []
+    for k, poly in enumerate(pitch_polylines()):
+        xy = np.asarray(poly, dtype=float)[:, :2]
+        if len(xy) < 2:
+            continue                       # the spots are points, not lines
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        run = np.concatenate([[0.0], np.cumsum(seg)])
+        n = max(2, int(run[-1] * SAMPLES_PER_M))
+        want = np.linspace(0.0, run[-1], n)
+        out.append(np.column_stack([np.interp(want, run, xy[:, i]) for i in (0, 1)]))
+        owner.append(np.full(n, k))
+    pts = np.concatenate(out)
+    _CACHE["xy1"] = np.column_stack([pts, np.ones(len(pts))])
+    _CACHE["owner"] = np.concatenate(owner)
 
 
 def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
@@ -98,12 +132,19 @@ def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
     return kmat @ np.column_stack([rot[:, 0], rot[:, 1], t])
 
 
-def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0) -> Residual:
+def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
+                   match_px: float = 40.0) -> Residual:
     """Score one camera against one decoded frame.
 
     `frame_path` must be a frame written by `camlab ingest`, i.e. already cropped — the same image
     space the camera was solved in. Scoring against an uncropped frame silently measures a
     different thing and still returns a plausible number.
+
+    `match_px` bounds the search. Unbounded nearest-paint was the original version and it is a trap
+    in both directions: a marking with no paint near it borrows the distance to something across
+    the frame, and a marking that has drifted onto a neighbouring line finds paint at ~0 and scores
+    perfect. The bound turns the first case into `n_unmatched`, which is reported rather than
+    averaged; the second is only visible per marking, which is what `worst_line_px` is for.
     """
     import cv2
 
@@ -128,17 +169,41 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0)
     w = np.where(np.abs(q[:, 2]) > 1e-9, q[:, 2], 1e-9)
     uv = q[:, :2] / w[:, None]
 
+    owner = _marking_owner()
     inside = ((uv[:, 0] > 1) & (uv[:, 0] < width - 2)
               & (uv[:, 1] > 1) & (uv[:, 1] < height - 2))
-    sub = uv[inside]
-    if not len(sub):
-        return Residual(frame, float("nan"), float("nan"), 0, 0)
+    if not inside.any():
+        return _empty(frame, 0)
+    idx = np.flatnonzero(inside)
+    sub = uv[idx]
     on = surface[np.rint(sub[:, 1]).astype(int), np.rint(sub[:, 0]).astype(int)] > 0
-    if not on.any():
-        return Residual(frame, float("nan"), float("nan"), 0, int(inside.sum()))
-    d = tree.query(sub[on])[0]
-    return Residual(frame, float(np.median(d)), float(np.percentile(d, 90)),
-                    int(d.size), int(inside.sum()))
+    idx, sub = idx[on], sub[on]
+    if not len(idx):
+        return _empty(frame, int(inside.sum()))
+
+    d, _nn = tree.query(sub, distance_upper_bound=match_px)
+    hit = np.isfinite(d)
+    n_unmatched = int((~hit).sum())
+    if not hit.any():
+        return _empty(frame, int(inside.sum()), n_unmatched)
+    d, own = d[hit], owner[idx[hit]]
+
+    per_line = {}
+    for k in np.unique(own):
+        dk = d[own == k]
+        per_line[int(k)] = (float(np.median(dk)), int(dk.size))
+    # A marking held up by three samples is not evidence about that marking; requiring a handful
+    # stops the worst-line number being decided by a corner clipping the frame.
+    solid = [v[0] for v in per_line.values() if v[1] >= 8]
+    worst = float(max(solid)) if solid else float("nan")
+
+    return Residual(frame, float(np.median(d)), float(np.percentile(d, 90)), float(d.max()),
+                    worst, per_line, int(d.size), int(inside.sum()), n_unmatched)
+
+
+def _empty(frame: int, n_projected: int, n_unmatched: int = 0) -> Residual:
+    nan = float("nan")
+    return Residual(frame, nan, nan, nan, nan, {}, 0, n_projected, n_unmatched)
 
 
 def compare(a: Residual, b: Residual, *, coverage_floor: float = 0.6) -> str:
