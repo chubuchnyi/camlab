@@ -28,6 +28,9 @@ echo "== shipping to $HOST"
 scp -q /tmp/camlab.tgz "$HOST:$STAGE/camlab.tgz"
 scp -q scripts/deploy_wsl.sh "$HOST:$STAGE/camlab_deploy.sh"
 
+# Ship the tracked tree at HEAD, so what runs on the box is a commit and not a working copy.
+# Uncommitted work is invisible to this on purpose.
+echo "== local HEAD: $(git log --oneline -1)"
 echo "== building and running inside WSL"
 OUT=$(ssh "$HOST" "wsl.exe -d Ubuntu-24.04 --user root -- bash /mnt/c/Users/user/camlab_deploy.sh")
 echo "$OUT"
@@ -51,5 +54,20 @@ sleep 1
 ssh -f -N -L "$LOCAL_PORT:$WSL_IP:8000" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 "$HOST"
 sleep 2
 curl -sS -m 20 -o /dev/null -w "   /api/health -> %{http_code}\n" "http://127.0.0.1:$LOCAL_PORT/api/health"
+
+# Prove the deploy took, rather than trusting that a build with no error changed anything. A
+# container that starts, serves the viewer and runs OLD code looks identical from the outside —
+# the box sat two hours stale behind a green deploy before anyone asked.
+echo "== what is actually running there:"
+ssh "$HOST" "wsl.exe -d Ubuntu-24.04 --user root -- docker exec camlab pip show camlab" \
+  2>/dev/null | sed -n 's/^Version: /   camlab /p' || true
+curl -sS -m 120 "http://127.0.0.1:$LOCAL_PORT/api/run/fan/residual/0" 2>/dev/null \
+  | python3 -c "import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('   (no fan run on the box, or the residual route is absent)'); raise SystemExit
+k = 'worst_line_px'
+print(f\"   residual route: {k}={d.get(k)} — present means the current metric is live\")" || true
 echo
 echo "   open http://localhost:$LOCAL_PORT"
