@@ -37,9 +37,12 @@ Full spec: [`docs/spec.md`](docs/spec.md). The measurement it rests on:
 ## Use it
 
 ```bash
-python -m camlab ingest fan --video ~/AVATAR/samples/video/14604731_1080_1920_30fps.mp4 \
-    --crop 1080 608 0 1294 --frames 120
-python -m camlab solve  fan --scene ~/AVATAR/out/fan_auto/scene_fan_auto.json
+# any mp4; the crop is the rect the calibration was solved in
+python -m camlab ingest fan --video /path/to/clip.mp4 --crop 1080 608 0 1294 --frames 120
+
+# M1 reads its homographies from an upstream pitch3d scene. M2 solves them here instead,
+# at which point this flag goes away.
+python -m camlab solve  fan --scene /path/to/pitch3d/out/<run>/scene.json
 python -m camlab list
 ```
 
