@@ -188,3 +188,79 @@ minimum around +20 m rather than at the seed. Constrained to something like ±20
 Open, and honestly open: the principal point is still assumed at the image centre (task #9), and a
 displaced one produces a focal bias of exactly this kind. That is the first thing to test before
 concluding the two instruments genuinely disagree rather than that one of them is mis-parameterised.
+
+---
+
+# CORRECTION: the section above was measured with a broken instrument
+
+Same day. **Retracted: "the fixed-centre premise survives its own strongest test."** It was not
+tested. What follows is what the test says once the instrument works.
+
+## The bug
+
+The pure-rotation check searched `(f_i, f_j)` on a **coarse log grid** — 34 points over 800–20000,
+about 10 % apart. That grid fabricates residual out of nothing, and the amount it fabricates
+depends on how much rotation the pair contains, which is exactly the quantity I was reading.
+
+Synthetic controls, where the answer is known:
+
+| case | grid, 34 pts | grid, 80 pts | **refined** | should be |
+|---|---|---|---|---|
+| pure rotation 3°, f=2400 | 0.000 | 0.000 | **0.0000** | 0 |
+| pure rotation 8°, f=2400 | **8.028** | 0.485 | **0.0000** | 0 |
+| rotation 8° + zoom 2400→3600 | **21.902** | 2.324 | **0.0000** | 0 |
+| rotation 8°, f=4300 | **13.297** | 6.404 | **0.0000** | 0 |
+| **translation 2 m at 60 m** | 15.671 | 7.670 | **2.2838** | large |
+
+On the coarse grid a **pure rotation** scores 8–22 px and a genuine 2 m translation scores 15.7 px.
+They are indistinguishable. Both of my earlier readings — first "allowing a zoom removes the
+parallax", then "the residual is 120× the precision, so it translates" — were readings of the grid
+step, not of the clip.
+
+The synthetics also give the scale for reading the real numbers: a pure rotation is 0, and roughly
+**1 px per metre** of camera translation at this clip's 60–80 m viewing distance.
+
+## What the corrected instrument says
+
+| gap | maps' own precision | rotation-only residual | median f_i |
+|---|---|---|---|
+| 2 | 0.284 px | **1.93 px** | 601 |
+| 10 | 0.414 px | **5.31 px** | 1078 |
+| 30 | 0.603 px | **9.83 px** | 1835 |
+| 58 | 0.562 px | **11.98 px** | 2072 |
+
+**A pure rotation does not explain the measured motion** — 7–20× the maps' own precision — and the
+residual **grows monotonically with the frame gap**.
+
+And a second symptom that matters more than the first: **the focal estimate depends on the
+baseline**, 601 → 2072 px as the gap grows. A correct model would return the same focal from every
+gap. A focal that walks with the baseline means the model is mis-specified, not that the focal has
+been measured.
+
+## What it does not say
+
+It does **not** say the camera translates. Three things produce exactly this signature and they
+have not been separated:
+
+- **Translation.** Grows with baseline. But read literally the numbers give ~1.9 m in 0.067 s,
+  which is 28 m/s — not a spectator shifting weight. So translation alone cannot be the whole of it.
+- **Rolling shutter.** A phone exposes the top and bottom of a frame ~30 ms apart, so during a pan
+  the true mapping is a shear and not a homography at all.
+- **Lens distortion.** A homography cannot represent it, so a distorted image makes `H ≠ K R K⁻¹`
+  even for a perfect rotation, and the discrepancy grows with how far the content moved.
+
+The gap-2 focal of 601 px is separately meaningless: over two frames the rotation is tiny and `f`
+is unidentifiable, which is the degeneracy the long gaps exist to avoid.
+
+## Where M2 stands, honestly
+
+- The PTZ model **fits** the paint about as well as 120 free cameras do, with one position.
+- The paint **cannot** place that position. Measured, twice, and not disputed.
+- Whether a fixed position is *physically right* is **still open**, and my two previous answers to
+  it were both artefacts.
+- The pixel instrument is now validated against known answers, which is the part that was missing
+  from the start — and the discipline that should have come first.
+
+Next, in order, and each cheap: separate rolling shutter from distortion from translation by
+fitting a distortion term to the maps and seeing how much residual survives; and check whether the
+baseline-dependent focal collapses once it does.

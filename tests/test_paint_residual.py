@@ -92,3 +92,54 @@ def _rodrigues_inv(rot):
         return np.zeros(3)
     v = np.array([rot[2, 1] - rot[1, 2], rot[0, 2] - rot[2, 0], rot[1, 0] - rot[0, 1]])
     return v * (theta / (2 * np.sin(theta)))
+
+
+class TestPixelMotionAgainstKnownAnswers:
+    """Synthetic controls for the pure-rotation test, which is the measurement M2 turns on.
+
+    These exist because the measurement was wrong twice, in opposite directions, before anyone
+    checked it against an answer that was known in advance. A coarse focal grid fabricates residual
+    in proportion to how much rotation a pair contains — which is the very quantity being read — so
+    a PURE rotation of 8 degrees scored 8 px, indistinguishable from a genuine 2 m translation at
+    15.7 px. Refining the focal search takes the pure cases to 0.0000.
+    """
+
+    W, H, CX, CY = 1080, 608, 540.0, -334.0
+
+    def _k(self, f):
+        return np.array([[f, 0.0, self.CX], [0.0, f, self.CY], [0.0, 0.0, 1.0]])
+
+    def _kinv(self, f):
+        return np.array([[1 / f, 0.0, -self.CX / f], [0.0, 1 / f, -self.CY / f], [0.0, 0.0, 1.0]])
+
+    def _rot(self, axis, deg):
+        th = np.radians(deg)
+        k = np.asarray(axis, float)
+        k /= np.linalg.norm(k)
+        kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        return np.eye(3) + np.sin(th) * kx + (1 - np.cos(th)) * (kx @ kx)
+
+    def _score(self, h):
+        from camlab.measure.pixel_motion import PairMotion, rotation_only_residual_px
+        px, _fi, _fj = rotation_only_residual_px(
+            PairMotion(0, 1, h, 999, 0.0), self.CX, self.CY, self.W, self.H)
+        return px
+
+    @pytest.mark.parametrize(("name", "fi", "fj", "deg"), [
+        ("small turn", 2400.0, 2400.0, 3.0),
+        ("large turn", 2400.0, 2400.0, 8.0),
+        ("turn while zooming", 2400.0, 3600.0, 8.0),
+        ("long lens", 4300.0, 4300.0, 8.0),
+    ])
+    def test_a_pure_rotation_scores_zero(self, name, fi, fj, deg):
+        h = self._k(fj) @ self._rot([0.2, 1.0, 0.3], deg) @ self._kinv(fi)
+        assert self._score(h) < 0.01, f"{name}: a pure rotation must be explained exactly"
+
+    def test_a_translating_camera_does_not(self):
+        """The plane-induced homography of a camera that moved 2 m at 60 m depth.
+
+        Also the calibration for reading real numbers: roughly 1 px per metre at this geometry.
+        """
+        rot = self._rot([0.2, 1.0, 0.3], 8.0)
+        h = self._k(2400.0) @ (rot + np.outer([2.0, 0, 0], [0, 0, 1.0]) / 60.0) @ self._kinv(2400.0)
+        assert self._score(h) > 1.0, "parallax must not be absorbable by any focal pair"

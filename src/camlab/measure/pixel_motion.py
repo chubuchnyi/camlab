@@ -236,3 +236,67 @@ def fit_rotation_only(pairs: list[PairMotion], frames, width: int, height: int,
     return (float(sol.x[0]),
             {f: rod(sol.x[1 + 3 * n:4 + 3 * n]) for n, f in enumerate(frames)},
             float(np.median(per_pair)))
+
+
+def rotation_only_residual_px(pair: PairMotion, cx: float, cy: float, width: int, height: int,
+                              grid: int = 9, bounds=(800.0, 20000.0)) -> tuple[float, float, float]:
+    """Closest pure-rotation explanation of one measured map, **in pixels**. `(px, f_i, f_j)`.
+
+    This is the number that decides whether the camera turned or travelled, so it is expressed in
+    the same unit as the map's own precision (0.28–0.60 px) rather than in an abstract
+    orthonormality norm — a residual you cannot compare to anything is a residual you will
+    misread, and I misread it twice in opposite directions before writing this.
+
+    **The focal search must be refined, not gridded.** A coarse grid over `f_i, f_j` fabricates
+    residual out of nothing: on a synthetic PURE rotation of 8° at f=2400, a 34-point log grid
+    returns 8.03 px, an 80-point grid 0.49 px, and a grid-seeded Nelder-Mead **0.0000 px**. The
+    grid version cannot tell that case apart from a genuine 2 m translation at 60 m depth, which
+    scores 15.7 px on the same coarse grid and 2.28 px refined. Every conclusion drawn from the
+    coarse version was an artefact of its own step size.
+
+    Calibration for reading the output, from those synthetics: a pure rotation gives 0, and about
+    **1 px per metre** of camera translation at this clip's ~60–80 m viewing distance.
+    """
+    import itertools
+
+    from scipy.optimize import minimize
+
+    us = np.linspace(0.15 * width, 0.85 * width, grid)
+    vs = np.linspace(0.15 * height, 0.85 * height, grid)
+    pts = np.column_stack([g.ravel() for g in np.meshgrid(us, vs)] + [np.ones(grid * grid)])
+
+    def apply(h):
+        q = pts @ h.T
+        w = np.where(np.abs(q[:, 2]) > 1e-9, q[:, 2], 1e-9)
+        return q[:, :2] / w[:, None]
+
+    def kmat(f):
+        return np.array([[f, 0.0, cx], [0.0, f, cy], [0.0, 0.0, 1.0]])
+
+    def kinv(f):
+        return np.array([[1.0 / f, 0.0, -cx / f], [0.0, 1.0 / f, -cy / f], [0.0, 0.0, 1.0]])
+
+    measured = apply(pair.h)
+
+    def cost(fi, fj):
+        if not (bounds[0] * 0.5 < fi < bounds[1] * 2 and bounds[0] * 0.5 < fj < bounds[1] * 2):
+            return 1e9
+        m = kinv(fj) @ pair.h @ kmat(fi)
+        det = np.linalg.det(m)
+        if abs(det) < 1e-12:
+            return 1e9
+        m = m / np.sign(det) / abs(det) ** (1 / 3)
+        u, _s, vt = np.linalg.svd(m)
+        rot = u @ np.diag([1.0, 1.0, float(np.linalg.det(u @ vt))]) @ vt
+        return float(np.median(np.linalg.norm(measured - apply(kmat(fj) @ rot @ kinv(fi)), axis=1)))
+
+    coarse = np.geomspace(*bounds, 26)
+    best, seed = np.inf, (coarse[0], coarse[0])
+    for fi, fj in itertools.product(coarse, coarse):
+        v = cost(float(fi), float(fj))
+        if v < best:
+            best, seed = v, (float(fi), float(fj))
+    res = minimize(lambda q: cost(float(np.exp(q[0])), float(np.exp(q[1]))), np.log(seed),
+                   method="Nelder-Mead",
+                   options={"xatol": 1e-5, "fatol": 1e-6, "maxiter": 800})
+    return float(res.fun), float(np.exp(res.x[0])), float(np.exp(res.x[1]))
