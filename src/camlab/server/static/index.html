@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=8" />
+  <link rel="stylesheet" href="/static/style.css?v=9" />
 </head>
 <body>
 
@@ -36,6 +36,9 @@
       </div>
       <div id="bstage">
         <img id="bframe" alt="frame" />
+        <!-- The paint mask, as its own layer. A frame with no detected line and a frame with no
+             paint look identical in a segment overlay and mean opposite things. -->
+        <img id="bpaint" alt="paint" />
         <div id="bcanvas"></div>
         <!-- SVG, not three.js, and in IMAGE coordinates via viewBox. The ruler has to be exact to
              the pixel of the photograph, and an SVG whose viewBox is the frame's own size is
@@ -44,7 +47,14 @@
       </div>
       <div id="btools">
         <label><input type="checkbox" id="T-lines" checked /> line error</label>
-        <label><input type="checkbox" id="T-segs" /> detected paint</label>
+        <label><input type="checkbox" id="T-segs" /> detected lines</label>
+        <label><input type="checkbox" id="T-paint" /> paint mask</label>
+        <label>finder
+          <select id="T-method">
+            <option value="hough">Hough</option>
+            <option value="lsd">LSD</option>
+          </select>
+        </label>
         <label title="drag on the frame to measure"><input type="checkbox" id="T-ruler" /> ruler</label>
         <span class="num" id="rulerout"></span>
         <span class="num muted" id="lineout"></span>
@@ -169,6 +179,9 @@ const view = createPitchView({
       ? "rank-poor homography — kept and marked, not trusted"
       : (c.live ? "" : "no camera for this frame");
     $("bframe").src = c.frame_url;
+    if ($("T-paint").checked && view.clip) {
+      $("bpaint").src = `/api/run/${view.clip.clip_id}/paint/${c.frame}.png`;
+    }
     drawLineError(c.frame);
     // The number behind window B. Fetched rather than computed here: the masks are a cv2
     // pipeline and belong on the server, next to the pixels.
@@ -309,7 +322,8 @@ async function drawLineError(n) {
   svg.setAttribute("viewBox", `0 0 ${clip.width} ${clip.height}`);
   let d;
   try {
-    d = await (await fetch(`/api/run/${clip.clip_id}/lines/${n}`)).json();
+    d = await (await fetch(
+      `/api/run/${clip.clip_id}/lines/${n}?method=${$("T-method").value}`)).json();
   } catch { return; }
   if (d.frame !== frame) return;                 // the scrubber moved on
   lineData = d;
@@ -342,13 +356,22 @@ async function drawLineError(n) {
   }
   const s = d.summary;
   $("lineout").textContent = s
-    ? `worst ${s.worst_offset_px == null ? "—" : s.worst_offset_px.toFixed(0)} px · ` +
+    ? `${d.method} · ${d.segments.length} lines · ` +
+      `worst ${s.worst_offset_px == null ? "—" : s.worst_offset_px.toFixed(0)} px · ` +
       `median ${s.median_offset_px == null ? "—" : s.median_offset_px.toFixed(0)} px · ` +
       `${s.n_matched}/${s.n_lines} lines${s.n_missed ? `, ${s.n_missed} with no paint` : ""}`
     : (d.note || "");
 }
 
-for (const id of ["T-lines", "T-segs"]) $(id).onchange = () => drawLineError(frame);
+for (const id of ["T-lines", "T-segs", "T-method"]) {
+  $(id).onchange = () => drawLineError(frame);
+}
+$("T-paint").onchange = (e) => {
+  $("bpaint").style.display = e.target.checked ? "block" : "none";
+  if (e.target.checked && view.clip) {
+    $("bpaint").src = `/api/run/${view.clip.clip_id}/paint/${frame}.png`;
+  }
+};
 // The overlay is click-through unless the ruler is armed, or it would swallow every drag meant
 // for the 3D view underneath.
 $("T-ruler").onchange = (e) => $("bsvg").classList.toggle("armed", e.target.checked);

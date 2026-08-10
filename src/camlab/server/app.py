@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from camlab import __version__
@@ -167,8 +167,33 @@ def residual(clip_id: str, n: int) -> dict:
 _LINES_CACHE: dict[tuple, dict] = {}
 
 
+@app.get("/api/run/{clip_id}/paint/{n}.png")
+def paint_png(clip_id: str, n: int) -> Response:
+    """The paint mask itself, as a transparent PNG — what the line finder was actually given.
+
+    Worth being able to see on its own. A frame with no detected line and a frame with no paint
+    look identical in an overlay of segments, and they mean opposite things: one is a finder
+    problem, the other is that there is nothing there.
+    """
+    import cv2
+
+    info = ClipInfo.load(clip_id)
+    path = info.frame_path(n)
+    if not path.exists():
+        raise HTTPException(404, f"{clip_id} frame {n} not decoded")
+    bgr = cv2.imread(str(path))
+    dist, surface = paint_masks(bgr)
+    on = (dist == 0) & (surface > 0)
+    rgba = np.zeros((*on.shape, 4), np.uint8)
+    rgba[on] = (60, 190, 255, 255)          # BGRA: amber, opaque only on the paint
+    ok, buf = cv2.imencode(".png", rgba)
+    if not ok:
+        raise HTTPException(500, "png encode failed")
+    return Response(bytes(buf), media_type="image/png")
+
+
 @app.get("/api/run/{clip_id}/lines/{n}")
-def lines(clip_id: str, n: int) -> dict:
+def lines(clip_id: str, n: int, method: str = "hough") -> dict:
     """Line-to-line error for one frame, in IMAGE coordinates, ready to draw and to measure.
 
     Everything here is in the pixels of the frame on disk, so the viewer can put it straight into
@@ -188,7 +213,10 @@ def lines(clip_id: str, n: int) -> dict:
         return {"frame": n, "lines": [], "segments": [], "summary": None,
                 "note": "no camera for this frame"}
 
-    key = (clip_id, n, cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
+    if method not in ("hough", "lsd"):
+        raise HTTPException(400, "method must be hough or lsd")
+    key = (clip_id, n, method,
+           cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
     if key in _LINES_CACHE:
         return _LINES_CACHE[key]
 
@@ -196,7 +224,7 @@ def lines(clip_id: str, n: int) -> dict:
     if bgr is None:
         raise HTTPException(404, f"{clip_id} frame {n} not decoded")
     dist, surface = paint_masks(bgr)
-    segs = detect_segments(dist, surface)
+    segs = detect_segments(dist, surface, method=method)
     # The principal point the camera was SOLVED under, from the camera file — not the clip's true
     # optical axis. A camera is only valid with its own K; swapping one in makes a different camera
     # and every offset below would be measuring that instead.
@@ -204,6 +232,7 @@ def lines(clip_id: str, n: int) -> dict:
                        info.width, info.height, cx=cam["cx"], cy=cam["cy"])
     out = {
         "frame": n,
+        "method": method,
         "width": info.width, "height": info.height,
         "segments": [[round(v, 1) for v in s] for s in segs.tolist()],
         "lines": [
