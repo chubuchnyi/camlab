@@ -84,7 +84,7 @@ def objective(segments, focal, rvec, centre, width, height, cx, cy) -> float:
 
 
 def refit_frame(segments, focal, rvec, centre, width, height, cx, cy,
-                frame: int = 0, maxiter: int = 1200) -> Refit:
+                frame: int = 0, maxiter: int = 1200, free_position: bool = True) -> Refit:
     """Local refit of `(focal, rotation, position)` for one frame. Nelder-Mead, no gradients.
 
     Derivative-free on purpose: the objective steps whenever a correspondence appears or vanishes,
@@ -92,15 +92,20 @@ def refit_frame(segments, focal, rvec, centre, width, height, cx, cy,
     stall on them.
     """
     p0 = np.concatenate([[float(focal)], np.asarray(rvec, float), np.asarray(centre, float)])
+    # With the position frozen this is the inner step of a PTZ refit: the centre is shared across
+    # the clip, so it cannot be a per-frame free parameter while it is being fitted globally.
+    n_free = 7 if free_position else 4
 
     def f(q):
-        p = p0 + q * STEP
+        p = p0.copy()
+        p[:n_free] += q * STEP[:n_free]
         return objective(segments, p[0], p[1:4], p[4:7], width, height, cx, cy)
 
-    before = f(np.zeros(7))
-    res = minimize(f, np.zeros(7), method="Nelder-Mead",
+    before = f(np.zeros(n_free))
+    res = minimize(f, np.zeros(n_free), method="Nelder-Mead",
                    options={"maxiter": maxiter, "xatol": 1e-3, "fatol": 1e-2})
-    p1 = p0 + res.x * STEP
+    p1 = p0.copy()
+    p1[:n_free] += res.x * STEP[:n_free]
 
     def stats(p):
         errs = line_errors(segments, p[0], p[1:4], p[4:7], width, height, cx=cx, cy=cy)
@@ -115,3 +120,63 @@ def refit_frame(segments, focal, rvec, centre, width, height, cx, cy,
     return Refit(frame, float(p1[0]), p1[1:4].copy(), p1[4:7].copy(),
                  float(w0), float(w1), int(n0), int(n1),
                  float(np.linalg.norm(p1[4:7] - p0[4:7])), float(p1[0] - p0[0]))
+
+
+def refit_ptz(per_frame, evidence, width: int, height: int, cx: float, cy: float, *,
+              anchors=None, rounds: int = 3, maxiter_inner: int = 400):
+    """Fit ONE shared optical centre against the line metric, by block coordinate descent.
+
+    Alternating, because the two blocks have very different shapes. Hold the centre and each
+    frame's `(focal, rotation)` is an independent four-parameter problem; hold the rotations and
+    the centre is three parameters shared by everything. Optimising all `3 + 4F` at once would put
+    a simplex in thirty-five dimensions, where it does badly and where the three parameters that
+    matter get lost among the thirty-two that do not.
+
+    `per_frame` is `{frame: (focal, rvec, position)}` — the starting camera, normally the
+    line-refitted per-frame solve, whose median position is the seed for the shared one.
+
+    Returns `(centre, {frame: (focal, rvec)}, worst_offsets)`.
+    """
+    frames = sorted(evidence)
+    if anchors is None:
+        anchors = frames if len(frames) <= 16 else [
+            frames[i] for i in np.unique(np.linspace(0, len(frames) - 1, 16).round().astype(int))
+        ]
+    centre = np.median(np.stack([per_frame[f][2] for f in frames]), axis=0)
+    centre[2] = max(centre[2], 0.5)
+    state = {f: (float(per_frame[f][0]), np.asarray(per_frame[f][1], float).copy())
+             for f in frames}
+
+    def score_at(c, subset):
+        tot = 0.0
+        for f in subset:
+            fo, rv = state[f]
+            tot += objective(evidence[f], fo, rv, c, width, height, cx, cy)
+        return tot / max(len(subset), 1)
+
+    for _ in range(rounds):
+        # --- block 1: every frame's own focal and rotation, centre held -----------------------
+        for f in frames:
+            fo, rv = state[f]
+            r = refit_frame(evidence[f], fo, rv, centre, width, height, cx, cy,
+                            frame=f, maxiter=maxiter_inner, free_position=False)
+            if r.after < r.before and r.n_after >= r.n_before:
+                state[f] = (r.focal_px, r.rotation)
+        # --- block 2: the shared centre, rotations held ----------------------------------------
+        step = np.array([1.5, 1.5, 1.0])
+        # Bound the loop variables explicitly: a closure over `centre` would see whatever it holds
+        # when the optimiser calls back, not what it held when the lambda was written.
+        res = minimize(lambda q, c0=centre, st=step: score_at(c0 + q * st, anchors), np.zeros(3),
+                       method="Nelder-Mead",
+                       options={"maxiter": 300, "xatol": 1e-3, "fatol": 1e-2})
+        cand = centre + res.x * step
+        if cand[2] > 0.5 and score_at(cand, anchors) < score_at(centre, anchors):
+            centre = cand
+
+    worst = {}
+    for f in frames:
+        fo, rv = state[f]
+        errs = line_errors(evidence[f], fo, rv, centre, width, height, cx=cx, cy=cy)
+        m = [e for e in errs if e.matched]
+        worst[f] = max((abs(e.offset_px) for e in m), default=float("nan"))
+    return centre, state, worst

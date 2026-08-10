@@ -332,6 +332,68 @@ def _cmd_refit(args) -> int:
     return 0
 
 
+def _cmd_refit_ptz(args) -> int:
+    """Refit ONE shared optical centre against the line metric."""
+    import time
+
+    import cv2
+
+    from camlab.measure.lines import detect_segments
+    from camlab.measure.paint import paint_masks
+    from camlab.solve.refit import objective, refit_ptz
+
+    info = ClipInfo.load(args.clip_id)
+    cam = read_camera(info.dir / args.camera)
+    cx, cy = cam["cx"], cam["cy"]
+    live = [i for i in range(len(cam["frames"])) if cam["focal_px"][i] > 0]
+
+    print(f"== {info.clip_id}: building paint evidence for {len(live)} frames")
+    ev, seed = {}, {}
+    for n, i in enumerate(live):
+        bgr = cv2.imread(str(info.frame_path(i)))
+        if bgr is None:
+            continue
+        dist, surface = paint_masks(bgr)
+        ev[i] = detect_segments(dist, surface, method=args.method)
+        seed[i] = (cam["focal_px"][i], np.asarray(cam["rotation"][i], float),
+                   np.asarray(cam["position"][i], float))
+        if n % 25 == 0:
+            print(f"      {n}/{len(live)} ...", flush=True)
+
+    before = np.array([objective(ev[i], *seed[i], info.width, info.height, cx, cy) for i in ev])
+    t0 = time.time()
+    centre, state, worst = refit_ptz(seed, ev, info.width, info.height, cx, cy,
+                                     rounds=args.rounds)
+    after = np.array([worst[i] for i in ev], float)
+
+    n = len(cam["frames"])
+    focal = np.zeros(n)
+    rot = np.zeros((n, 3))
+    for i, (fo, rv) in state.items():
+        focal[i], rot[i] = fo, rv
+    out = write_camera(
+        info.dir / args.out, model="ptz_line_refit", clip_id=info.clip_id,
+        width=info.width, height=info.height, frames=np.asarray(cam["frames"], int),
+        focal_px=focal, position=np.repeat(np.asarray(centre)[None], n, axis=0), rotation=rot,
+        cx=cx, cy=cy, degenerate=(focal <= 0).tolist(),
+        seed_camera=args.camera, centre_m=[round(float(v), 4) for v in centre],
+        notes=("ONE optical centre for the whole clip, fitted against the LINE metric by block "
+               "coordinate descent. The previous PTZ fit used nearest-paint ICP, the objective "
+               "since shown not to measure camera error."),
+    )
+    live_f = focal[focal > 0]
+    print(f"\n== fitted in {time.time() - t0:.0f}s")
+    print(f"   centre {np.round(centre, 2).tolist()} m  (seed was "
+          f"{np.round(np.median([s[2] for s in seed.values()], axis=0), 2).tolist()})")
+    if live_f.size:
+        print(f"   focal  {live_f.min():.0f}-{live_f.max():.0f} px "
+              f"(x{live_f.max() / max(live_f.min(), 1):.2f})")
+    print(f"   worst-offset median {np.nanmedian(before):7.1f} px  ->  "
+          f"{np.nanmedian(after):7.1f} px")
+    print(f"   -> {out}")
+    return 0
+
+
 def _cmd_list(_args) -> int:
     runs = list_runs()
     if not runs:
@@ -385,6 +447,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", default="camera_refit.json")
     p.add_argument("--method", choices=["hough", "lsd"], default="hough")
     p.set_defaults(fn=_cmd_refit)
+
+    p = sub.add_parser("refit-ptz", help="fit ONE shared centre against the line metric")
+    p.add_argument("clip_id")
+    p.add_argument("--camera", default="camera_refit.json")
+    p.add_argument("--out", default="camera_ptz_refit.json")
+    p.add_argument("--method", choices=["hough", "lsd"], default="hough")
+    p.add_argument("--rounds", type=int, default=3)
+    p.set_defaults(fn=_cmd_refit_ptz)
 
     p = sub.add_parser("list", help="what is in runs/")
     p.set_defaults(fn=_cmd_list)
