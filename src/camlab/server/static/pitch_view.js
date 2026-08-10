@@ -84,6 +84,7 @@ export function createPitchView(cfg) {
 
   let clip = null;
   let cam = null;
+  let turfMesh = null;      // the double-click raycast target; see onDoubleClick
   let planeDistance = 40;
   let frameTex = null;
   let fitPoints = [];
@@ -232,8 +233,107 @@ export function createPitchView(cfg) {
   new ResizeObserver(resize).observe(mount);
   if (mountB) new ResizeObserver(resize).observe(mountB);
 
-  (function tick() {
+  // ------------------------------------------------------------------------------ navigation --
+  //
+  // Orbit and zoom alone are not enough to judge where a camera stands: the question is what the
+  // stand looks like from a few metres away, and orbiting that means orbiting THERE, not around a
+  // centre spot 75 m off.
+
+  //: Metres per second at the base rate. Scaled by the distance to the pivot, so the same key
+  //: feels the same whether the whole pitch is in view or one camera body is.
+  const FLY_BASE = 0.55;
+  const held = new Set();
+
+  // Bound to the viewport, not to `window`. On window, typing a focal into a panel field would
+  // fly the view — the "a" in a number box is not a movement command.
+  mount.tabIndex = 0;
+  mount.addEventListener("pointerdown", () => mount.focus());
+  mount.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    if ("wasdqe".includes(k)) { held.add(k); e.preventDefault(); }
+    if (k === "f") frameAll();
+  });
+  mount.addEventListener("keyup", (e) => held.delete(e.key.toLowerCase()));
+  mount.addEventListener("blur", () => held.clear());   // else a key held while alt-tabbing sticks
+
+  /** One fly step. `keys` is any iterable of w/a/s/d/q/e/shift; `dt` is seconds.
+   *
+   * Split out from the key handler and exported, because the render loop it is normally driven
+   * from is `requestAnimationFrame` — which a browser freezes in a background tab. That makes
+   * "does WASD work?" unanswerable from outside without either a foreground window or this seam,
+   * and "I could not observe it move" is not the same finding as "it does not move".
+   *
+   * Returns the distance actually travelled, in metres, so a caller can assert on it.
+   */
+  function fly(keys, dt) {
+    const k = keys instanceof Set ? keys : new Set(keys);
+    if (!k.size || !(dt > 0)) return 0;
+    const fwd = new THREE.Vector3().subVectors(orbit.target, view.position);
+    const dist = fwd.length();
+    fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, view.up).normalize();
+    // Speed scales with how far away the pivot is, so the same key feels the same whether the
+    // whole pitch is in view or a single camera body is.
+    const step = FLY_BASE * dt * Math.max(dist * 0.35, 1.5) * (k.has("shift") ? 3.3 : 1);
+
+    const move = new THREE.Vector3();
+    if (k.has("w")) move.add(fwd);
+    if (k.has("s")) move.sub(fwd);
+    if (k.has("d")) move.add(right);
+    if (k.has("a")) move.sub(right);
+    if (k.has("e")) move.add(view.up);
+    if (k.has("q")) move.sub(view.up);
+    if (!move.lengthSq()) return 0;
+    move.normalize().multiplyScalar(step);
+    // Move the pivot WITH the eye. Moving only the eye turns W into a zoom, and the next orbit
+    // then spins around a point left behind somewhere in the stands.
+    view.position.add(move);
+    orbit.target.add(move);
+    orbit.update();
+    return move.length();
+  }
+
+  function flyStep(dt) { return fly(held, dt); }
+
+  addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === "Shift") held.add("shift");
+    if (e.key === "f" || e.key === "F") frameAll();
+  });
+  addEventListener("keyup", (e) => { if (e.key === "Shift") held.delete("shift"); });
+
+  const ray = new THREE.Raycaster();
+  renderer.domElement.addEventListener("dblclick", (e) => {
+    if (!turfMesh) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    ray.setFromCamera(new THREE.Vector2(
+      ((e.clientX - r.left) / r.width) * 2 - 1,
+      -((e.clientY - r.top) / r.height) * 2 + 1,
+    ), view);
+    // Against the TURF only, and against the turf even when its layer is switched off — the pivot
+    // must land on the ground plane. Raycasting the whole scene would happily pivot on a frustum
+    // line or a trajectory dot, which puts the orbit centre inside the object being inspected.
+    const was = groups.turf.visible;
+    groups.turf.visible = true;
+    const hit = ray.intersectObject(turfMesh, false)[0];
+    groups.turf.visible = was;
+    if (!hit) return;
+    // Keep the angle and the distance; move only what is being looked at.
+    const offset = new THREE.Vector3().subVectors(view.position, orbit.target);
+    orbit.target.copy(hit.point);
+    view.position.copy(hit.point).add(offset);
+    orbit.update();
+  });
+
+  // Declared before the render loop on purpose: `flyStep` hoists, its `const held` does
+  // not, so a loop that starts first dies on the temporal dead zone at frame one.
+  let lastTick = 0;
+  (function tick(now) {
     requestAnimationFrame(tick);
+    // Real seconds, not frames: a 144 Hz screen must not fly twice as fast as a 60 Hz one.
+    const dt = lastTick ? Math.min((now - lastTick) / 1000, 0.1) : 0;
+    lastTick = now;
+    flyStep(dt);
     orbit.update();
     renderer.render(scene, view);
     if (rendererB && cam) {
@@ -250,12 +350,8 @@ export function createPitchView(cfg) {
       rendererB.render(scene, solved);
       hidden.forEach((k, i) => { groups[k].visible = was[i]; });
     }
-  })();
+  })(0);
 
-  addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-    if (e.key === "f" || e.key === "F") frameAll();
-  });
 
   // Fit to the PROJECTED corners, not to a bounding sphere. A pitch is a flat rectangle seen
   // obliquely: the sphere containing it projects far larger than it does, so fitting the sphere
@@ -301,6 +397,7 @@ export function createPitchView(cfg) {
     );
     turf.position.z = -0.01;     // below the paint, so z-fighting never eats a line
     groups.turf.add(turf);
+    turfMesh = turf;
 
     for (const poly of d.markings) {
       if (poly.length === 1) {
@@ -385,7 +482,7 @@ export function createPitchView(cfg) {
   }
 
   return {
-    initPitch, loadRun, show, setLayer, setPlaneDistance, frameAll, resize,
+    initPitch, loadRun, show, setLayer, setPlaneDistance, frameAll, fly, resize,
     resetView: frameAll,
     get clip() { return clip; },
     get cam() { return cam; },
