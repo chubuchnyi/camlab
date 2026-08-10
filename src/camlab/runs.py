@@ -84,6 +84,27 @@ class ClipInfo:
     def frame_path(self, n: int) -> Path:
         return self.dir / "frames" / f"{n:06d}.jpg"
 
+    @property
+    def principal_point(self) -> tuple[float, float]:
+        """The optical axis, in the coordinates of the frames on disk.
+
+        **Not the centre of the cropped frame.** A crop moves the image relative to the lens; the
+        optical axis stays where the lens put it, which is the centre of the SOURCE frame. Cutting
+        `1080x608+0+1294` out of a 1080x1920 clip leaves the axis at `(540, -334)` — 638 px above
+        the crop, further than the crop is tall.
+
+        Measured 2026-08-10, and it is not a technicality. Sweeping `cy` through the image->image
+        maps, which know nothing about the crop, puts the minimum at **-334.0** — the arithmetic
+        value to the decimal — against **0.1005** at the crop centre we had assumed. A factor of
+        2.4 in an instrument precise to 0.05. See `docs/findings/m2-principal-point.md`.
+
+        Uncropped clips get the frame centre, which is the same statement with a zero offset.
+        """
+        if self.crop is None:
+            return self.width / 2.0, self.height / 2.0
+        _w, _h, x, y = self.crop
+        return self.source_width / 2.0 - x, self.source_height / 2.0 - y
+
 
 def list_runs() -> list[str]:
     root = runs_root()

@@ -81,3 +81,28 @@ class TestAgainstTheRealRun:
 
     def test_a_frame_past_the_end_is_a_404_not_a_blank(self):
         assert client.get("/api/run/fan/frame/99999").status_code == 404
+
+
+def test_a_crop_moves_the_principal_point():
+    """The optical axis stays where the lens put it; the crop moves the image around it.
+
+    Measured, not reasoned: sweeping cy through the image->image maps — which know nothing about
+    any crop — puts the minimum at -334.0, the arithmetic value to the decimal, against a 2.4x
+    worse score at the crop's own centre. docs/findings/m2-principal-point.md.
+
+    pitch3d has this defect live: `--crop auto` crops and `camera_from_calibration` takes cx, cy as
+    the centre of whatever size it is handed.
+    """
+    fan = ClipInfo(
+        clip_id="t", source="x", source_sha256="0", width=1080, height=608, fps=30.0,
+        n_frames=1, first_frame=0, crop=(1080, 608, 0, 1294),
+        source_width=1080, source_height=1920,
+    )
+    assert fan.principal_point == (540.0, -334.0)
+    assert fan.principal_point != (fan.width / 2, fan.height / 2), "the trap this exists to avoid"
+
+    uncropped = ClipInfo(
+        clip_id="t", source="x", source_sha256="0", width=1920, height=1080, fps=30.0,
+        n_frames=1, first_frame=0, crop=None, source_width=1920, source_height=1080,
+    )
+    assert uncropped.principal_point == (960.0, 540.0), "no crop, no offset"
