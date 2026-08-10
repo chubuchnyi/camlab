@@ -14,12 +14,13 @@ to one camera. On a tripod clip that is tolerable. On a phone clip from the stan
 slides **0.899 m per frame** under every player, which reads as a storm of footballers and makes the
 scene unjudgeable by eye.
 
-Measured 2026-08-10 (`pitch3d/docs/findings/m1-handheld-centre-2026-08-10.md`): fixing the camera
+Measured 2026-08-10 ([`docs/findings/m1-fixed-centre.md`](docs/findings/m1-fixed-centre.md)): fixing the camera
 **position** for the whole clip costs 0.90–1.23× against those free homographies while placing
 37–64 % *more* of the pitch in frame. Fixing the **focal** as well costs 1.5–2.1×, because the clip
 zooms 1.66×. So: one position, one shared intrinsic, a per-frame focal curve, a per-frame rotation.
 
-Full spec: `pitch3d/docs/camlab-spec.md`.
+Full spec: [`docs/spec.md`](docs/spec.md). The measurement it rests on:
+[`docs/findings/m1-fixed-centre.md`](docs/findings/m1-fixed-centre.md).
 
 ## Status
 
@@ -106,9 +107,26 @@ The register of what was inherited and what has actually been checked is
 verified against a real measurement, the calibration it is fed is only verified to 8 px against
 the painted lines, and the thresholds are not verified at all.
 
+## Layout
+
+```
+src/camlab/
+  core/      pure numpy: pitch model, camera types, plane->camera recovery, projection
+  measure/   the paint in the frame, and how far a camera is from it — the ground truth
+  solve/     per-frame cameras today; the PTZ model at M2
+  io/        video in, frames and clip.json out; reading an upstream scene
+  server/    FastAPI + a vendored three.js viewer, no CDN, no build step
+docs/
+  spec.md              what this is, why, and the plan
+  findings/            measurements made here
+  inherited-claims.md  what came from upstream and whether it has been checked
+tests/     against real captured data wherever possible, not against fakes
+```
+
 ## Relationship to pitch3d
 
-This is a **copy** of `pitch3d/src/pitch3d/core/`, not a dependency — the camera contract itself has
+camlab is **self-contained**: it installs, tests, runs and deploys without pitch3d present. What
+came from there is a **copy**, not a dependency — the camera contract itself has
 to change here (`CameraTrack` holds one intrinsic for a whole clip, so a zoom is not representable).
 Each copied file carries a header saying where it came from. Do not hand-sync them back.
 

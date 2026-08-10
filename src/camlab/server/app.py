@@ -28,6 +28,7 @@ from camlab import __version__
 from camlab.camera_file import read_camera
 from camlab.core.pitch import pitch_polylines, pitch_upright_polylines
 from camlab.core.units import FieldDimensions
+from camlab.measure.residual import frame_residual
 from camlab.runs import ClipInfo, list_runs
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -114,6 +115,43 @@ def frame(clip_id: str, n: int) -> FileResponse:
     if not p.exists():
         raise HTTPException(404, f"{clip_id} frame {n} not decoded (have {info.n_frames})")
     return FileResponse(p, media_type="image/jpeg")
+
+
+#: Masks cost ~0.4 s a frame and never change for a given (clip, frame, camera), so the scrubber
+#: would otherwise re-measure the same thing every time it passed. Keyed by the camera too, so a
+#: hand edit (M3) or a filtered track (#8) does not silently read a stale number.
+_RESIDUAL_CACHE: dict[tuple, dict] = {}
+
+
+@app.get("/api/run/{clip_id}/residual/{n}")
+def residual(clip_id: str, n: int) -> dict:
+    """How far this frame's camera puts the pitch from where the pitch is actually painted.
+
+    The number behind window B. `n_scored` is not decoration: only markings that land on the
+    playing surface are scored, so a camera that has run away projects almost everything somewhere
+    unscoreable and posts a flattering median on the survivors. Read the two together, always.
+    """
+    info = ClipInfo.load(clip_id)
+    path = info.dir / "camera_auto.json"
+    if not path.exists():
+        raise HTTPException(404, f"{clip_id} has no camera_auto.json")
+    cam = read_camera(path)
+    if not (0 <= n < len(cam["frames"])):
+        raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
+
+    key = (clip_id, n, cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
+    if key not in _RESIDUAL_CACHE:
+        r = frame_residual(info.frame_path(n), cam["focal_px"][n], cam["rotation"][n],
+                           cam["position"][n], frame=n)
+        _RESIDUAL_CACHE[key] = {
+            "frame": r.frame,
+            "median_px": None if r.n == 0 else round(r.median_px, 2),
+            "p90_px": None if r.n == 0 else round(r.p90_px, 2),
+            "n_scored": r.n,
+            "n_projected": r.n_projected,
+            "coverage": round(r.coverage, 4),
+        }
+    return _RESIDUAL_CACHE[key]
 
 
 @app.get("/")

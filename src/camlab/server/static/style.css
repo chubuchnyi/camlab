@@ -81,3 +81,5 @@ html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
 #cam tr.drv th, #cam tr.drv td { color: #6f7681; }
 #cam td.bad { color: #ff3ea5; }
 .drvkey { color: #6f7681; }
+#cam td.ok { color: #6ee7a0; }
+#cam td.warn { color: #ffb454; }

@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=6" />
+  <link rel="stylesheet" href="/static/style.css?v=7" />
 </head>
 <body>
 
@@ -79,6 +79,10 @@
       <tr class="drv"><th>fov y</th><td class="num" id="c-fovy">—</td></tr>
       <tr class="grp"><td colspan="2">derived</td></tr>
       <tr class="drv"><th>axis&nbsp;hits</th><td class="num" id="c-ground">—</td></tr>
+      <tr class="grp"><td colspan="2">measured against the paint</td></tr>
+      <tr><th>error</th><td class="num" id="c-resid">—</td></tr>
+      <tr class="drv"><th>p90</th><td class="num" id="c-resid90">—</td></tr>
+      <tr class="drv"><th>scored</th><td class="num" id="c-residn">—</td></tr>
     </table>
     <p class="small muted">
       7 free parameters: position, orientation, focal.
@@ -113,7 +117,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=12";
+import { createPitchView } from "/static/pitch_view.js?v=13";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -152,6 +156,31 @@ const view = createPitchView({
       ? "rank-poor homography — kept and marked, not trusted"
       : (c.live ? "" : "no camera for this frame");
     $("bframe").src = c.frame_url;
+    // The number behind window B. Fetched rather than computed here: the masks are a cv2
+    // pipeline and belong on the server, next to the pixels.
+    $("c-resid").textContent = "…";
+    $("c-resid90").textContent = "";
+    $("c-residn").textContent = "";
+    const want = c.frame;
+    fetch(`/api/run/${view.clip.clip_id}/residual/${want}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (want !== frame) return;            // the scrubber moved on; this answer is stale
+        if (d.median_px == null) {
+          $("c-resid").textContent = "no evidence";
+          $("c-resid").className = "num bad";
+          $("c-residn").textContent = `0 of ${d.n_projected} in frame`;
+          return;
+        }
+        $("c-resid").textContent = `${d.median_px.toFixed(1)} px`;
+        // A tripod clip sits at 1.4-1.7 px against the paint. Past ~5 px the overlay is visibly
+        // off; past ~15 it is a different camera.
+        $("c-resid").className = "num " + (d.median_px > 15 ? "bad"
+                                          : d.median_px > 5 ? "warn" : "ok");
+        $("c-resid90").textContent = `${d.p90_px.toFixed(1)} px`;
+        $("c-residn").textContent = `${d.n_scored} pts, ${(d.coverage * 100).toFixed(0)}% of pitch`;
+      })
+      .catch(() => { $("c-resid").textContent = "—"; });
   },
 });
 

@@ -10,7 +10,7 @@ this one thread:
 |---|---|
 | the fan clip's camera reprojects at **12 382 px** | measured in the wrong image space. `--crop auto` moved the homographies into a 1080×608 rect while the fit was handed 1080×1920, putting the principal point 656 px outside an image 608 px tall. Correct-space value: 18 313 px |
 | `--camera-carry` was off in every scene ("unset means off") | wrong. The default is **8** at all three layers (`cli.py:690`, `cli.py:129`, `wiring.py:114`). The remedy the brief called untried had been on the whole time |
-| "for handheld footage a novel view does not exist" | rested on an analogy, not a measurement — WorldPose has no phone clips. [M-1](../../AVATAR/docs/findings/m1-handheld-centre-2026-08-10.md) refuted it: fixing the camera position costs 0.90–1.23× |
+| "for handheld footage a novel view does not exist" | rested on an analogy, not a measurement — WorldPose has no phone clips. [M-1](findings/m1-fixed-centre.md) refuted it: fixing the camera position costs 0.90–1.23× |
 | `FieldCalibration.confidence` | **anti-predictive**, Pearson r = +0.699 against real paint error. The frames it trusts most are the worst ones. Measured three times, still exported |
 | `_SINGULAR_DET = 1e-12` catches degenerate homographies | misses the real cases by six orders of magnitude. Fan frames 115/117 sit at 1.0e-6 and 5.3e-8 |
 | `--calibrator keypoints` runs the keypoint backend | without `--calibrator-backend` it constructs a stub that raises `NotImplementedError` |

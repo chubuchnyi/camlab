@@ -9,7 +9,7 @@ description = "Camera-calibration prototype: one clip in, a solved and hand-edit
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
-    "scipy>=1.11",
+    "scipy>=1.11",   # cKDTree, for the paint residual
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
