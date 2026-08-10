@@ -27,11 +27,29 @@ Full spec: `pitch3d/docs/camlab-spec.md`.
 |---|---|---|
 | M-1 | is a fixed camera position defensible for handheld? | **done** — yes |
 | **M0** | repo, container, port, UI shows the pitch | **done** — served from the box 2026-08-10 |
-| M1 | clip in → today's free homography → camera, frustum, trajectory, frame plane, camera view | |
+| **M1** | clip in → today's free homography → camera, frustum, trajectory, frame plane, camera view | **done** 2026-08-10 |
 | M1.5 | take PnLCalib's camera directly instead of collapsing it to a homography | |
 | M2 | the PTZ model: one position, per-frame rotation, smooth focal | the point of the repo |
 | M3 | hand controls, `camera_manual.json`, live reprojection error | |
 | M4 | skeletons, ball, per-layer and per-player hiding | |
+
+## Use it
+
+```bash
+python -m camlab ingest fan --video ~/AVATAR/samples/video/14604731_1080_1920_30fps.mp4 \
+    --crop 1080 608 0 1294 --frames 120
+python -m camlab solve  fan --scene ~/AVATAR/out/fan_auto/scene_fan_auto.json
+python -m camlab list
+```
+
+`solve` is M1's control side: **each frame decomposed from its own free 8-DOF homography, at its
+own best focal.** It is not one camera and is not meant to be — the spread of the recovered
+positions IS the ground swim, drawn in metres. On the fan clip: 120/120 frames, median 6.4 m from
+the median position, worst 82.3 m. One camera would read 0.0 m for both.
+
+Window B is the verdict. On frame 0 the projected goal frame lands on the real one — the goals are
+the only geometry with height, so they are what checks the focal. By frame 60 it is ~70 px out.
+That variation, frame by frame, is what M2 exists to remove.
 
 ## Run it
 

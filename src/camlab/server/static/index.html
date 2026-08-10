@@ -13,67 +13,209 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=3" />
+  <link rel="stylesheet" href="/static/style.css?v=5" />
 </head>
 <body>
 
 <div id="app">
-  <div id="view">
-    <div id="hud">
-      <b>camlab</b> <span class="muted">M0 — pitch only. No clip loaded.</span>
-      <div class="muted" id="stat">loading…</div>
-      <div id="err"></div>
+  <div id="left">
+    <div id="view">
+      <div id="hud">
+        <b>camlab</b> <span class="muted" id="clipinfo">—</span>
+        <div class="muted" id="stat">loading…</div>
+        <div id="err"></div>
+      </div>
+    </div>
+
+    <!-- Window B. The <img> is the evidence and the canvas is transparent over it, so nothing in
+         the 3D pipeline can resample or tint the frame on its way to the eye. -->
+    <div id="bwrap">
+      <div class="caption">
+        what the solved camera sees — <b>the verdict is here</b>:
+        the drawn lines must lie on the painted ones
+      </div>
+      <div id="bstage">
+        <img id="bframe" alt="frame" />
+        <div id="bcanvas"></div>
+      </div>
     </div>
   </div>
 
   <aside id="panel">
+    <h2>Clip</h2>
+    <select id="clip"></select>
+
     <h2>Layers</h2>
-    <label><input type="checkbox" id="L-turf"     checked /> turf</label>
-    <label><input type="checkbox" id="L-markings" checked /> markings</label>
-    <label><input type="checkbox" id="L-goals"    checked /> goals + flags</label>
-    <label class="off"><input type="checkbox" disabled /> camera <span class="soon">M1</span></label>
-    <label class="off"><input type="checkbox" disabled /> trajectory <span class="soon">M1</span></label>
-    <label class="off"><input type="checkbox" disabled /> frame plane <span class="soon">M1</span></label>
+    <label><input type="checkbox" id="L-turf"       checked /> turf</label>
+    <label><input type="checkbox" id="L-markings"   checked /> markings</label>
+    <label><input type="checkbox" id="L-goals"      checked /> goals + flags</label>
+    <label><input type="checkbox" id="L-camera"     checked /> camera + frustum</label>
+    <label><input type="checkbox" id="L-trajectory" checked /> trajectory</label>
+    <label><input type="checkbox" id="L-frameplane" checked /> frame plane</label>
     <label class="off"><input type="checkbox" disabled /> players <span class="soon">M4</span></label>
     <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
 
-    <h2>View</h2>
-    <button id="reset">reset view</button>
-    <p class="muted small">
-      drag: orbit · right-drag: pan · wheel: zoom · <kbd>F</kbd>: frame all
-    </p>
+    <h2>Frame plane</h2>
+    <label class="row">distance
+      <input type="range" id="planed" min="5" max="120" step="1" value="40" />
+      <span class="num" id="planedv">40 m</span>
+    </label>
 
-    <h2>World</h2>
-    <div class="small muted" id="worldinfo">—</div>
+    <h2>Camera <span class="muted small" id="model"></span></h2>
+    <table id="cam">
+      <tr><th>focal</th><td class="num" id="c-focal">—</td></tr>
+      <tr><th>fov x</th><td class="num" id="c-fov">—</td></tr>
+      <tr><th>X</th><td class="num" id="c-x">—</td></tr>
+      <tr><th>Y</th><td class="num" id="c-y">—</td></tr>
+      <tr><th>Z</th><td class="num" id="c-z">—</td></tr>
+    </table>
+    <div id="c-flag"></div>
+
+    <h2>Solve</h2>
+    <div class="small muted" id="solveinfo">—</div>
+
+    <h2>View</h2>
+    <button id="reset">frame all (F)</button>
+    <p class="muted small">drag: orbit · right-drag: pan · wheel: zoom</p>
   </aside>
 </div>
 
+<div id="bar">
+  <button id="prev" title="previous frame (left arrow)">&#9664;</button>
+  <button id="play" title="play / pause (space)">&#9654;</button>
+  <button id="next" title="next frame (right arrow)">&#9654;|</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" />
+  <span class="num" id="fnum">0</span>
+  <!-- One cell per frame, coloured by whether that frame HAS a camera. A clip whose tail is
+       unsolvable should look unsolvable without scrubbing to the end to find out. -->
+  <div id="strip"></div>
+</div>
+
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=4";
+import { createPitchView } from "/static/pitch_view.js?v=7";
 
 const $ = (id) => document.getElementById(id);
+const err = (m) => { $("err").textContent = m || ""; };
 
 const view = createPitchView({
   mount: $("view"),
-  onStatus: (m) => { $("stat").textContent = m; },
-  onError:  (m) => { $("err").textContent = m || ""; },
+  mountB: $("bcanvas"),
+  onCamera: (c) => {
+    $("c-focal").textContent = c.live ? `${c.focal_px.toFixed(0)} px` : "—";
+    $("c-fov").textContent   = c.live ? `${c.fov_x_deg.toFixed(1)}°` : "—";
+    const [x, y, z] = c.position;
+    $("c-x").textContent = c.live ? `${x.toFixed(2)} m` : "—";
+    $("c-y").textContent = c.live ? `${y.toFixed(2)} m` : "—";
+    $("c-z").textContent = c.live ? `${z.toFixed(2)} m` : "—";
+    $("c-flag").className = c.degenerate ? "flag bad" : (c.live ? "flag ok" : "flag none");
+    $("c-flag").textContent = c.degenerate
+      ? "rank-poor homography — kept and marked, not trusted"
+      : (c.live ? "" : "no camera for this frame");
+    $("bframe").src = c.frame_url;
+  },
 });
 
-for (const key of ["turf", "markings", "goals"]) {
-  $(`L-${key}`).onchange = (e) => view.setLayer(key, e.target.checked);
+let nFrames = 0, frame = 0, playing = false;
+
+async function show(n) {
+  frame = Math.max(0, Math.min(nFrames - 1, n));
+  $("scrub").value = String(frame);
+  $("fnum").textContent = String(frame);
+  for (const el of $("strip").children) el.classList.toggle("now", +el.dataset.i === frame);
+  await view.show(frame);
 }
-$("reset").onclick = () => view.resetView();
+
+function buildStrip(cam) {
+  const s = $("strip");
+  s.innerHTML = "";
+  for (let i = 0; i < cam.frames.length; i++) {
+    const d = document.createElement("i");
+    d.dataset.i = i;
+    d.className = cam.degenerate?.[i] ? "bad" : (cam.focal_px[i] > 0 ? "ok" : "none");
+    d.onclick = () => { playing = false; show(i); };
+    s.appendChild(d);
+  }
+}
+
+async function openClip(id) {
+  err("");
+  const cam = await view.loadRun(id);
+  const clip = view.clip;
+  nFrames = clip.n_frames;
+  $("scrub").max = String(nFrames - 1);
+  $("clipinfo").textContent =
+    `${clip.source} · ${clip.width}x${clip.height}` +
+    (clip.crop ? ` (cropped ${clip.crop.join(",")})` : " (uncropped)") +
+    ` · ${clip.n_frames} frames @ ${clip.fps}fps`;
+  $("model").textContent = cam.model;
+  $("bstage").style.aspectRatio = `${clip.width} / ${clip.height}`;
+
+  const live = cam.focal_px.filter((f) => f > 0);
+  const bad = (cam.degenerate || []).filter(Boolean).length;
+  const pos = cam.position.filter((_, i) => cam.focal_px[i] > 0);
+  const med = [0, 1, 2].map((k) => pos.map((p) => p[k]).sort((a, b) => a - b)[pos.length >> 1]);
+  const dist = pos.map((p) => Math.hypot(p[0] - med[0], p[1] - med[1], p[2] - med[2]))
+    .sort((a, b) => a - b);
+  $("solveinfo").innerHTML =
+    `${live.length}/${cam.focal_px.length} frames solved` +
+    (bad ? `, <span class="warn">${bad} rank-poor</span>` : "") + "<br>" +
+    `focal ${Math.min(...live).toFixed(0)}-${Math.max(...live).toFixed(0)} px<br>` +
+    `centre offset: median ${dist[dist.length >> 1].toFixed(1)} m, ` +
+    `max ${dist[dist.length - 1].toFixed(1)} m<br>` +
+    `<span class="muted">one camera would read 0.0 m for both</span>`;
+
+  buildStrip(cam);
+  $("stat").textContent = "";
+  await show(0);
+}
+
+for (const k of ["turf", "markings", "goals", "camera", "trajectory", "frameplane"]) {
+  $(`L-${k}`).onchange = (e) => view.setLayer(k, e.target.checked);
+}
+$("planed").oninput = (e) => {
+  $("planedv").textContent = `${e.target.value} m`;
+  view.setPlaneDistance(+e.target.value, frame);
+};
+$("reset").onclick = () => view.frameAll();
+$("prev").onclick = () => { playing = false; show(frame - 1); };
+$("next").onclick = () => { playing = false; show(frame + 1); };
+$("play").onclick = (e) => { playing = !playing; e.target.textContent = playing ? "❚❚" : "▶"; };
+$("scrub").oninput = () => { playing = false; show(+$("scrub").value); };
+$("clip").onchange = (e) => openClip(e.target.value).catch((x) => err(String(x.message || x)));
+
+addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowLeft") { playing = false; show(frame - 1); }
+  else if (e.key === "ArrowRight") { playing = false; show(frame + 1); }
+  else if (e.key === " ") { e.preventDefault(); $("play").click(); }
+});
+
+// Playback is throttled and gated on the previous frame having landed, so a slow frame slows
+// playback instead of queueing a backlog of them.
+let last = 0, busy = false;
+(function loop(t) {
+  requestAnimationFrame(loop);
+  if (playing && !busy && t - last > 90) {
+    last = t;
+    busy = true;
+    show(frame + 1 >= nFrames ? 0 : frame + 1).finally(() => { busy = false; });
+  }
+})(0);
 
 (async function main() {
   try {
-    const info = await view.init();
-    $("worldinfo").innerHTML =
-      `${info.length} &times; ${info.width} m<br>` +
-      `${info.markings} marking polylines<br>` +
-      `${info.uprights} uprights (goals + flags)<br>` +
-      `Z-up, right-handed, origin = centre spot`;
+    await view.initPitch();
+    const runs = await (await fetch("/api/runs")).json();
+    const solved = runs.filter((r) => r.solved);
+    if (!solved.length) {
+      $("stat").textContent = "no solved runs — run `camlab ingest` then `camlab solve`";
+      return;
+    }
+    $("clip").innerHTML = solved
+      .map((r) => `<option value="${r.clip_id}">${r.clip_id}</option>`).join("");
+    await openClip(solved[0].clip_id);
   } catch (e) {
-    $("err").textContent = "failed to load: " + (e.message || e);
+    err("failed to load: " + (e.message || e));
     $("stat").textContent = "";
   }
 })();
