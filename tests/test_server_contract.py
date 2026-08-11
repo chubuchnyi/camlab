@@ -144,3 +144,21 @@ def test_a_clip_scoped_edit_moves_every_frame_and_keeps_their_own_aim():
             path.unlink(missing_ok=True)
         else:
             path.write_text(before)
+
+
+def test_the_copy_from_frame_control_is_wired_and_cannot_go_clip_wide():
+    """Copying a neighbour is how a lost frame gets fixed quickly; it must stay one frame.
+
+    "Copy frame 70 onto frame 66" is an instruction about one frame. Honouring the clip-wide
+    checkbox while doing it would write 120 positions, which is exactly how a hand-aligned frame
+    was destroyed once already.
+    """
+    page = (STATIC / "index.html").read_text()
+    assert 'id="e-copyfrom"' in page and 'id="e-copy"' in page
+    handler = re.search(r'\$\("e-copy"\)\.onclick[\s\S]*?\n\};', page)
+    assert handler, "the copy button must have a handler, not just markup"
+    body = handler.group(0)
+    assert 'e-clip"' in body and "checked = false" in body, (
+        "the copy must clear the clip-wide box for the write and put it back"
+    )
+    assert "nFrames" in body, "and it must reject a frame number outside the clip"

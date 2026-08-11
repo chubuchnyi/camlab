@@ -46,6 +46,9 @@ def main() -> None:
                     help="comma-separated frame numbers; each frame is carried from its nearest")
     ap.add_argument("--seed", default="camera_auto.json")
     ap.add_argument("--out", default="camera_carry.json")
+    ap.add_argument("--no-hand", action="store_true",
+                    help="ignore calib/ and refit every anchor from the solve — the honest test "
+                         "of whether this works with no human in the loop at all")
     ap.add_argument("--nelder-mead", action="store_true",
                     help="use the old scalar objective. Off by default: measured against eight "
                          "hand-aligned frames it reaches 13.8 px where the least-squares refit "
@@ -64,6 +67,8 @@ def main() -> None:
     hand_path = next((Path(__file__).resolve().parent.parent / "calib")
                      .glob(f"{args.clip}-hand-aligned-*.json"), None)
     hand = json.loads(hand_path.read_text()).get(args.seed, {}) if hand_path else {}
+    if args.no_hand:
+        hand = {}
     anchors = sorted({int(a) for a in str(args.anchor).split(",") if a.strip() != ""})
     if not anchors or anchors[0] < 0 or anchors[-1] >= n:
         raise SystemExit(f"anchors {anchors} must all be within 0..{n - 1}")
