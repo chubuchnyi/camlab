@@ -70,6 +70,18 @@ def main() -> None:
     pos = np.asarray(src["position"], float)
 
     centroid, direction, share = fit_line(pos)
+    # With no spread there is no line to fit, and the first principal direction of a point cloud
+    # that is one point is whatever the SVD felt like. That happened: a self-healed solve whose
+    # positions are all identical reported "100.0 % of the variance along ..., spread 0.0 m", the
+    # search slid along an arbitrary axis and made the camera worse. The degeneracy direction is
+    # known without fitting anything — it is the line of sight to the pitch, because that is the
+    # axis focal and distance trade along.
+    spread = float(np.ptp(pos @ direction)) if len(pos) > 1 else 0.0
+    if spread < 1.0:
+        direction = centroid / (np.linalg.norm(centroid) + 1e-9)
+        share = float("nan")
+        print("   the positions do not spread at all, so there is no line to fit — searching "
+              "along the line of sight instead, which is the axis the degeneracy runs on")
     off = pos - centroid
     scatter = np.linalg.norm(off - np.outer(off @ direction, direction), axis=1)
     print(f"== {args.clip}: {n} frames from {args.src}")

@@ -1,0 +1,207 @@
+"""A first camera for a clip that has none, chosen by how well it survives being carried.
+
+`solve/bootstrap.py` generates candidates well — family-consistent, order-preserving line
+correspondences, four at a time, four thousand plausible cameras in twelve seconds. Choosing among
+them on ONE frame does not work: the best by paint came back 113 m from the truth with the focal
+pinned at its lower bound, because a wrong camera that sees half the pitch satisfies the paint
+about as well as a right one that sees all of it.
+
+**A wrong camera is wrong differently on the next frame.** Carry each candidate through the
+measured image→image homography to two frames further on, refit it there, and score all three. The
+right camera holds; a wrong one falls apart, because the homography moves it as the real camera
+moved and the pitch it then predicts is not the pitch that is there.
+
+That filter costs almost nothing — both halves already exist — and it is the strongest signal
+available that a single frame cannot give.
+
+**The 180° ambiguity is not solved here and cannot be.** A football pitch is symmetric under a
+half-turn about the centre spot, so `(x, y, z) → (−x, −y, z)` with yaw + 180° scores *bit for bit*
+identically. Both are returned; the caller or a human picks. See `findings/bootstrap-progress.md`.
+
+Run:  .venv/bin/python scripts/bootstrap_clip.py <clip> [--frame 0] [--top 40]
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import cv2  # noqa: E402
+
+from camlab.camera_file import write_camera  # noqa: E402
+from camlab.core.angles import (  # noqa: E402
+    angles_from_rotation,
+    matrix_from_rodrigues,
+    rodrigues_from_matrix,
+    rotation_from_angles,
+)
+from camlab.measure.lines import detect_segments  # noqa: E402
+from camlab.measure.paint import paint_masks  # noqa: E402
+from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
+from camlab.measure.residual import frame_residual  # noqa: E402
+from camlab.runs import ClipInfo  # noqa: E402
+from camlab.solve.bootstrap import hypotheses  # noqa: E402
+from camlab.solve.carry import carry  # noqa: E402
+from camlab.solve.refit import refit_frame_lm  # noqa: E402
+
+
+def plausible(h) -> bool:
+    """A football camera: off the pitch, above head height, not at a focal bound."""
+    d = float(np.linalg.norm(h.position[:2]))
+    return (900.0 < h.focal_px < 12000.0) and (5.0 < h.position[2] < 45.0) and (35.0 < d < 140.0)
+
+
+def half_turn(focal, rvec, pos):
+    """The other camera that fits the same markings exactly. Not an alternative — a twin."""
+    yaw, elev, roll = angles_from_rotation(matrix_from_rodrigues(np.asarray(rvec, float)))
+    return (focal,
+            rodrigues_from_matrix(rotation_from_angles(yaw + 180.0, elev, roll)),
+            np.array([-pos[0], -pos[1], pos[2]]))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("clip")
+    ap.add_argument("--frame", type=int, default=0)
+    ap.add_argument("--gaps", default="5,11", help="frames ahead to carry each candidate to")
+    ap.add_argument("--top", type=int, default=40, help="candidates taken past the single frame")
+    ap.add_argument("--min-samples", type=int, default=100,
+                    help="loose absolute coverage floor; NOT relative to the best candidate")
+    ap.add_argument("--max-hypotheses", type=int, default=60_000)
+    ap.add_argument("--out", default="camera_boot.json")
+    args = ap.parse_args()
+
+    t0 = time.time()
+    info = ClipInfo.load(args.clip)
+    cx, cy = info.principal_point
+    a = args.frame
+    gaps = [int(g) for g in args.gaps.split(",") if g.strip()]
+    probes = [a] + [a + g for g in gaps if a + g < info.n_frames]
+    if len(probes) < 2:
+        raise SystemExit(f"{args.clip} has {info.n_frames} frames — not enough to carry into")
+
+    seg = {}
+    for i in probes:
+        d, s = paint_masks(cv2.imread(str(info.frame_path(i))))
+        seg[i] = detect_segments(d, s, method="hough")
+    print(f"== {args.clip}: anchor {a}, carrying candidates to {probes[1:]}")
+    print(f"   segments per probe frame: {[len(seg[i]) for i in probes]}")
+
+    pairs = measure_pairs({i: info.frame_path(i) for i in probes}, gaps=gaps)
+    h_of = {(p.i, p.j): p.h for p in pairs}
+    missing = [g for g in gaps if (a, a + g) not in h_of]
+    if missing:
+        print(f"   !! no measured homography for gaps {missing} — those probes are dropped")
+    probes = [a] + [a + g for g in gaps if (a, a + g) in h_of]
+
+    def paint(i, f, rv, c):
+        r = frame_residual(info.frame_path(i), f, rv, c, frame=i, cx=cx, cy=cy)
+        return r.worst_line_px, r.n
+
+    cands = []
+    for h in hypotheses(seg[a], info.width, info.height, cx, cy,
+                        max_hypotheses=args.max_hypotheses):
+        if not plausible(h):
+            continue
+        rv = rodrigues_from_matrix(h.rotation)
+        r = refit_frame_lm(seg[a], h.focal_px, rv, h.position, info.width, info.height, cx, cy)
+        w, n = paint(a, r.focal_px, r.rotation, r.position)
+        if np.isfinite(w):
+            cands.append((w, n, r.focal_px, r.rotation, r.position))
+    if not cands:
+        raise SystemExit("no plausible camera at all on the anchor frame")
+    # Only a loose ABSOLUTE floor. Coverage was briefly used relative to the best candidate and
+    # that is backwards: a very wide camera far away projects the whole pitch small and scores 961
+    # samples where the true camera scores 307, so "70 % of the best" threw the right answer out.
+    # More coverage is not more correct, and the filter that actually works is below — a wrong
+    # camera does not survive being carried.
+    kept = [c for c in cands if c[1] >= args.min_samples]
+    kept.sort(key=lambda c: c[0])
+    print(f"   {len(cands)} cameras fit the anchor, {len(kept)} with at least "
+          f"{args.min_samples} samples. Carrying the top {args.top}.")
+
+    # The carry test goes FIRST and on everything, because ranking by the single frame is exactly
+    # what was shown not to work: on fan the truth is in the pool — a hypothesis 4.8 m away with
+    # the focal 11 % off — and it does not reach the top sixty by single-frame paint. So carry
+    # every candidate with no refit (closed form, and the paint masks are already built), keep what
+    # survives, and spend the expensive refit only on those.
+    rough = []
+    for w0, n0, f0, rv0, p0 in kept:
+        ws, ns = [w0], [n0]
+        for i in probes[1:]:
+            moved = carry(f0, rv0, p0, h_of[(a, i)], cx, cy)
+            if moved is None:
+                ws.append(float("inf"))
+                continue
+            w, n = paint(i, moved.focal_px, moved.rotation, moved.position)
+            ws.append(w if np.isfinite(w) else float("inf"))
+            ns.append(n)
+        rough.append((max(ws), f0, rv0, p0))
+    rough.sort(key=lambda r: r[0])
+    print(f"   carried all {len(kept)} with no refit; best worst-probe {rough[0][0]:.1f} px. "
+          f"Refining the top {args.top}.")
+
+    scored = []
+    for _rw, f0, rv0, p0 in rough[:args.top]:
+        ws, ns, cam = [], [], None
+        for i in probes:
+            if i == a:
+                f_, rv_, p_ = f0, rv0, p0
+            else:
+                moved = carry(f0, rv0, p0, h_of[(a, i)], cx, cy)
+                if moved is None:
+                    ws.append(float("inf"))
+                    continue
+                f_, rv_, p_ = moved.focal_px, moved.rotation, moved.position
+            r = refit_frame_lm(seg[i], f_, rv_, p_, info.width, info.height, cx, cy)
+            w, n = paint(i, r.focal_px, r.rotation, r.position)
+            ws.append(w if np.isfinite(w) else float("inf"))
+            ns.append(n)
+            if i == a:
+                cam = (r.focal_px, r.rotation, r.position)
+        if cam is None:
+            continue
+        # The WORST of the probe frames, not the mean. A camera that is right on one frame and
+        # hopeless two frames later is not a seed, and a mean lets the good frame hide that.
+        scored.append((max(ws), float(np.median(ws)), min(ns) if ns else 0,
+                       cam[0], cam[1], cam[2], ws))
+    scored.sort(key=lambda s: s[0])
+
+    print(f"\n   {'worst probe':>12} {'median':>8} {'min samples':>12}  focal   position")
+    for s in scored[:6]:
+        print(f"   {s[0]:12.1f} {s[1]:8.1f} {s[2]:12d}  {s[3]:6.0f}  {np.round(s[5], 1)}")
+
+    worst, med, nmin, focal, rvec, pos, ws = scored[0]
+    if not np.isfinite(worst):
+        raise SystemExit("nothing survived being carried — no seed found")
+
+    n = info.n_frames
+    for tag, (f, rv, p) in (("", (focal, rvec, pos)),
+                            ("_flip", half_turn(focal, rvec, pos))):
+        out = args.out.replace(".json", f"{tag}.json")
+        write_camera(
+            info.dir / out, model="line_correspondence_bootstrap", clip_id=info.clip_id,
+            width=info.width, height=info.height, frames=np.arange(n),
+            focal_px=np.full(n, float(f)), position=np.tile(p, (n, 1)),
+            rotation=np.tile(rv, (n, 1)), cx=cx, cy=cy, degenerate=[False] * n,
+            bootstrap_frame=a, probe_frames=probes, probe_errors=[float(x) for x in ws],
+            half_turn=bool(tag),
+            notes=("One camera, repeated on every frame, to be used as a SEED — feed it to "
+                   "solve_carry.py, which will follow the operator from here. The pitch is "
+                   "symmetric under a half-turn about the centre spot, so the `_flip` file fits "
+                   "the markings exactly as well and nothing in them can choose between the two."),
+        )
+    print(f"\n== wrote {args.out} and its half-turn twin in {time.time() - t0:.0f}s")
+    print(f"   worst probe {worst:.1f} px over frames {probes}, min coverage {nmin} samples")
+    print(f"   focal {focal:.0f}, position {np.round(pos, 2)}")
+    print("   the twin fits identically — the markings cannot say which half of the pitch this is")
+
+
+if __name__ == "__main__":
+    main()
