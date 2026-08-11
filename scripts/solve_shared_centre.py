@@ -55,8 +55,10 @@ def main() -> None:
     ap.add_argument("clip", nargs="?", default="fan")
     ap.add_argument("--from", dest="src", default="camera_lm.json")
     ap.add_argument("--out", default="camera_fixed.json")
-    ap.add_argument("--span", type=float, default=6.0, help="metres either way along the line")
-    ap.add_argument("--step", type=float, default=0.75)
+    ap.add_argument("--span", type=float, default=0.0,
+                    help="metres either way along the line. 0 = derive it from how far the solve "
+                         "actually strung itself out, which is the only thing that knows the scale")
+    ap.add_argument("--step", type=float, default=0.0, help="0 = span/8")
     ap.add_argument("--probe", type=int, default=6, help="score every Nth frame while searching")
     args = ap.parse_args()
 
@@ -97,15 +99,42 @@ def main() -> None:
         return float(np.nanmedian(w)), int(np.nansum(np.asarray(w) < 20.0)), len(w)
 
     probe = list(range(0, n, args.probe))
-    print(f"\n   sliding along it, scoring {len(probe)} frames at each stop:")
-    print(f'   {"t (m)":>7} {"median":>8} {"under 20":>10}')
+    # The span has to come from the data. A solve with three hand anchors strings out over 21 m and
+    # a fixed +/-6 m covers it; the anchor-free one strings out over 98 m, and the same +/-6 m
+    # returned its minimum AT THE EDGE — a boundary answer dressed up as an optimum, 7.06 px where
+    # the wider search finds better. An edge result is now a loop condition, not a printed number
+    # nobody reads.
+    span = args.span if args.span > 0 else max(6.0, 0.5 * float(np.ptp(off @ direction)))
+    step = args.step if args.step > 0 else span / 8.0
+
     best = None
-    for t in np.arange(-args.span, args.span + 1e-9, args.step):
-        med, u20, tot = score(solve_at(centroid + t * direction, probe))
-        print(f"   {t:7.2f} {med:8.2f} {u20:7d}/{tot}")
-        if best is None or med < best[0]:
-            best = (med, float(t))
-    med, t_best = best
+    for attempt in range(4):
+        print(f"\n   sliding along it, +/-{span:.1f} m in {step:.2f} m steps, "
+              f"scoring {len(probe)} frames at each stop:")
+        print(f'   {"t (m)":>7} {"median":>8} {"under 20":>10}')
+        best = None
+        for t in np.arange(-span, span + 1e-9, step):
+            med, u20, tot = score(solve_at(centroid + t * direction, probe))
+            print(f"   {t:7.2f} {med:8.2f} {u20:7d}/{tot}")
+            if best is None or med < best[0]:
+                best = (med, float(t))
+        if abs(abs(best[1]) - span) > step / 2:
+            break
+        print(f"   the best is at the EDGE (t = {best[1]:+.2f} of +/-{span:.1f}), so the minimum "
+              f"is outside — widening")
+        centroid = centroid + best[1] * direction
+        span, step = span, step          # recentre rather than widen: same resolution, new window
+        if attempt == 3:
+            print("   still at the edge after four windows — reporting it rather than pretending")
+
+    # Refine around the winner at a quarter of the step, since the coarse grid can only ever land
+    # the answer within half a step of the truth.
+    fine = None
+    for t in np.arange(best[1] - step, best[1] + step + 1e-9, step / 4):
+        med, _u, _tot = score(solve_at(centroid + t * direction, probe))
+        if fine is None or med < fine[0]:
+            fine = (med, float(t))
+    med, t_best = fine if fine[0] <= best[0] else best
     centre = centroid + t_best * direction
     print(f"\n   best at t = {t_best:+.2f} m -> {np.round(centre, 2)}, {med:.2f} px on the probe")
 
