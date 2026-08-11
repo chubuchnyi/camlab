@@ -34,7 +34,21 @@ MERGE_OFFSET_PX = 6.0
 
 #: After merging, anything shorter than this is dropped. A short segment's direction is noisy, and
 #: direction is the *only* thing the vanishing point reads.
-MIN_MERGED_PX = 60.0
+#:
+#: Raised from 60 to 100 on measurement. LENGTH turned out to be the discriminator that
+#: STRAIGHTNESS was expected to be and is not (#17): real markings on the fan clip run a median of
+#: 216 px while everything else the finder returns runs 86 px. Refitting all 120 frames at each cut:
+#:
+#:      cut    segments/frame   refit median   frames under 20 px
+#:        0         16.4           2.19 px          81/120
+#:      100         10.2           2.18 px          90/120     <-
+#:      120          9.3           2.22 px          89/120
+#:      150          8.2           2.57 px          87/120
+#:      200          6.5          14.0  px          collapses; the solve runs out of evidence
+#:
+#: Nine more frames, and the median does not move — so what is being removed was carrying none of
+#: the fit. Past ~150 the cut starts taking real markings with it.
+MIN_MERGED_PX = 100.0
 
 #: Applied to LSD's RAW fragments, before merging, and it must stay small. LSD cuts a marking into
 #: many short pieces, so a cut here removes the pieces the merge is supposed to reassemble — set to
