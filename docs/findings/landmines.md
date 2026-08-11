@@ -58,7 +58,17 @@ Ordered by how much they cost.
   21.9 px to 41.7 px, 83 of 120 frames worse. Deploy after fixing something a human touches.
 - **"The backend is down" was a dead ssh tunnel.** The container was up, the WSL IP unchanged, only
   the local forward had gone. `ss -ltn | grep 8100` before anything else; the tunnel has no
-  supervisor and nothing restarts it.
+  supervisor and nothing restarts it. `scripts/tunnel.sh` exists for this.
+- **The WSL VM sleeps when nothing is attached, and takes dockerd with it.** Every probe wakes it,
+  it answers, and it sleeps again — so the box is alive from a shell and dead from a browser. Tell
+  by `uptime -p` inside WSL reading minutes when it should read days, and every container saying
+  "Up 1 second" with `restartcount=0`. Hold it open with a running `wsl.exe` process
+  (`tunnel.sh` does); no Windows configuration change is needed.
+- **A dockerd back from an unclean stop runs containers whose port binding never got established.**
+  `docker inspect` says `PortBindings=map[8000/tcp:[{0.0.0.0 8000}]]`, `docker port camlab` prints
+  nothing, and the app inside logs a healthy "Uvicorn running on http://0.0.0.0:8000". Nothing is
+  wrong with the image or the code. `docker restart` does not fix it — the container has to be
+  recreated, i.e. run `deploy.sh`.
 - **A clip-scoped position edit silently destroyed a hand-aligned frame.** "position applies to the
   whole clip" writes the shared position over EVERY frame, including ones tuned by eye. The
   rotation survives, but a rotation aimed from a different point is a worse camera than the solve
