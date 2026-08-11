@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -38,7 +38,7 @@ from camlab.measure.line_error import line_errors, summarise
 from camlab.measure.lines import detect_segments
 from camlab.measure.paint import paint_masks
 from camlab.measure.residual import frame_residual
-from camlab.runs import ClipInfo, list_runs
+from camlab.runs import ClipInfo, list_runs, runs_root
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -122,6 +122,68 @@ def runs() -> list[dict]:
             "solved": (info.dir / "camera_auto.json").exists(),
         })
     return out
+
+
+#: An upload is a video, not an archive and not a script. Nothing here executes what arrives — it
+#: is handed to ffmpeg through `ingest`, which decodes frames or fails.
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}
+#: 2 GB. Large enough for a phone clip at 4K, small enough that a mistake does not fill the volume.
+_MAX_UPLOAD_BYTES = 2 << 30
+
+
+# Module-level singletons rather than calls in the signature: FastAPI wants the call, ruff's B008
+# forbids it in a default, and this is the form both accept.
+_F_VIDEO = File(...)
+_F_CLIP = Form("")
+_F_FRAMES = Form(60)
+_F_FIRST = Form(0)
+
+
+@app.post("/api/upload")
+async def upload(video: UploadFile = _F_VIDEO, clip_id: str = _F_CLIP,
+                 frames: int = _F_FRAMES, first: int = _F_FIRST) -> dict:
+    """Take a video from the browser, decode it into a run, and make it selectable.
+
+    The point is to be able to try a clip nobody has tuned anything for. Every number in this repo
+    was measured on two clips that arrived with a camera already fitted by another project, and a
+    method that only works on the clips it was built against is not a method.
+
+    Decoding is synchronous. Sixty frames takes a few seconds and a progress channel would be more
+    moving parts than the wait is worth; the browser shows a spinner and waits.
+    """
+    from camlab.io.ingest import ingest
+
+    name = Path(video.filename or "clip").name
+    if Path(name).suffix.lower() not in _VIDEO_SUFFIXES:
+        raise HTTPException(400, f"{name}: expected one of {sorted(_VIDEO_SUFFIXES)}")
+    cid = "".join(c if (c.isalnum() or c in "-_") else "_"
+                  for c in (clip_id.strip() or Path(name).stem))[:40]
+    if not cid:
+        raise HTTPException(400, "give the clip a name")
+    if cid in set(list_runs()):
+        raise HTTPException(409, f"{cid} already exists — pick another name")
+    if not (1 <= frames <= 600):
+        raise HTTPException(400, "frames must be between 1 and 600")
+
+    uploads = runs_root() / "_uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    dest = uploads / f"{cid}{Path(name).suffix.lower()}"
+    size = 0
+    with dest.open("wb") as fh:
+        while chunk := await video.read(1 << 20):
+            size += len(chunk)
+            if size > _MAX_UPLOAD_BYTES:
+                fh.close()
+                dest.unlink(missing_ok=True)
+                raise HTTPException(413, "over 2 GB")
+            fh.write(chunk)
+    try:
+        info = ingest(dest, cid, first=first, n_frames=frames, crop=None)
+    except Exception as exc:                      # noqa: BLE001 - report, do not leave a half-run
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, f"could not decode {name}: {exc}") from exc
+    return {"clip_id": info.clip_id, "width": info.width, "height": info.height,
+            "fps": info.fps, "n_frames": info.n_frames, "bytes": size}
 
 
 @app.get("/api/run/{clip_id}/camera")

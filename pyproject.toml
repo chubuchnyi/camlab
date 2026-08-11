@@ -12,6 +12,7 @@ dependencies = [
     "scipy>=1.11",   # cKDTree, for the paint residual
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",  # the upload form; FastAPI raises at import without it
 ]
 
 [project.optional-dependencies]

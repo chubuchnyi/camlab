@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=13" />
+  <link rel="stylesheet" href="/static/style.css?v=14" />
 </head>
 <body>
 
@@ -67,6 +67,24 @@
   <aside id="panel">
     <h2>Clip</h2>
     <select id="clip"></select>
+    <!-- Upload, so a clip nobody has tuned anything for can be tried. Every number in this repo
+         was measured on two clips that arrived with a camera already fitted elsewhere, and a
+         method that only works on the clips it was built against is not a method. -->
+    <div id="uptools">
+      <label class="row">video
+        <input type="file" id="u-file" accept="video/*" />
+      </label>
+      <label class="row">name
+        <input class="ed" id="u-name" type="text" placeholder="from the filename" />
+      </label>
+      <label class="row">frames
+        <input class="ed" id="u-frames" type="number" min="1" max="600" step="10" value="60" />
+        from
+        <input class="ed" id="u-first" type="number" min="0" step="10" value="0" />
+      </label>
+      <button id="u-go">upload and decode</button>
+      <div class="small muted" id="u-note">decoding is synchronous — sixty frames takes a few seconds</div>
+    </div>
     <h2>Camera</h2>
     <select id="camsel"></select>
 
@@ -324,7 +342,7 @@ $("prev").onclick = () => { playing = false; show(frame - 1); };
 $("next").onclick = () => { playing = false; show(frame + 1); };
 $("play").onclick = (e) => { playing = !playing; e.target.textContent = playing ? "❚❚" : "▶"; };
 $("scrub").oninput = () => { playing = false; show(+$("scrub").value); };
-$("clip").onchange = (e) => openClip(e.target.value).catch((x) => err(String(x.message || x)));
+$("clip").onchange = (e) => listClips(e.target.value).catch((x) => err(String(x.message || x)));
 
 addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
@@ -610,18 +628,63 @@ let last = 0, busy = false;
 // which a background tab freezes, so this is the only handle a check from outside can use.
 window.camlab = view;
 
+// Every ingested clip, not only the solved ones. An uploaded clip has no camera yet — that is the
+// open problem, not a reason to hide the clip — so it is listed and labelled, and selecting it
+// says what is missing instead of throwing.
+async function listClips(select) {
+  const runs = await (await fetch("/api/runs")).json();
+  if (!runs.length) {
+    $("stat").textContent = "no clips yet — upload one";
+    return;
+  }
+  $("clip").innerHTML = runs.map((r) =>
+    `<option value="${r.clip_id}">${r.clip_id}${r.solved ? "" : "  (no camera)"}</option>`).join("");
+  const want = select || (runs.find((r) => r.solved) || runs[0]).clip_id;
+  $("clip").value = want;
+  const chosen = runs.find((r) => r.clip_id === want);
+  if (!chosen.solved) {
+    $("stat").textContent = `${want}: ${chosen.n_frames} frames decoded, no camera yet`;
+    err(`${want} has no camera. Nothing here can make a first one from a clip alone yet — `
+      + `that is the open problem (see docs/findings/bootstrap-progress.md).`);
+    return;
+  }
+  await openClip(want);
+}
+
+$("u-go").onclick = async () => {
+  const f = $("u-file").files[0];
+  if (!f) { err("choose a video first"); return; }
+  const btn = $("u-go");
+  btn.disabled = true;
+  const was = btn.textContent;
+  btn.textContent = "decoding…";
+  err("");
+  $("u-note").textContent = `uploading ${(f.size / 1e6).toFixed(0)} MB…`;
+  try {
+    const body = new FormData();
+    body.append("video", f);
+    body.append("clip_id", $("u-name").value);
+    body.append("frames", $("u-frames").value);
+    body.append("first", $("u-first").value);
+    const r = await fetch("/api/upload", { method: "POST", body });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.status);
+    $("u-note").textContent =
+      `${d.clip_id}: ${d.n_frames} frames at ${d.width}x${d.height} @ ${Math.round(d.fps)}fps`;
+    await listClips(d.clip_id);
+  } catch (e) {
+    err("upload failed: " + (e.message || e));
+    $("u-note").textContent = "";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = was;
+  }
+};
+
 (async function main() {
   try {
     await view.initPitch();
-    const runs = await (await fetch("/api/runs")).json();
-    const solved = runs.filter((r) => r.solved);
-    if (!solved.length) {
-      $("stat").textContent = "no solved runs — run `camlab ingest` then `camlab solve`";
-      return;
-    }
-    $("clip").innerHTML = solved
-      .map((r) => `<option value="${r.clip_id}">${r.clip_id}</option>`).join("");
-    await openClip(solved[0].clip_id);
+    await listClips();
   } catch (e) {
     err("failed to load: " + (e.message || e));
     $("stat").textContent = "";

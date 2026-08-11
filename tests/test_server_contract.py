@@ -162,3 +162,30 @@ def test_the_copy_from_frame_control_is_wired_and_cannot_go_clip_wide():
         "the copy must clear the clip-wide box for the write and put it back"
     )
     assert "nFrames" in body, "and it must reject a frame number outside the clip"
+
+
+def test_the_upload_route_rejects_what_is_not_a_video():
+    """The upload exists so a clip nobody has tuned anything for can be tried.
+
+    It hands what arrives to ffmpeg and executes nothing, but the extension check is still the
+    cheap first gate, and a route that accepts anything and fails deep inside a decoder reports
+    the wrong thing to the person who used it.
+    """
+    c = TestClient(app)
+    r = c.post("/api/upload", files={"video": ("notes.txt", b"not a video", "text/plain")},
+               data={"clip_id": "should_not_exist"})
+    assert r.status_code == 400 and "expected one of" in r.json()["detail"]
+
+    from camlab.runs import list_runs
+    r = c.post("/api/upload", files={"video": ("x.mp4", b"\x00" * 32, "video/mp4")},
+               data={"clip_id": sorted(list_runs())[0]})
+    assert r.status_code == 409, "an existing clip must not be silently overwritten"
+
+
+def test_the_page_lists_unsolved_clips_instead_of_hiding_them():
+    """An uploaded clip has no camera yet. That is the open problem, not a reason to hide it."""
+    page = (STATIC / "index.html").read_text()
+    assert 'id="u-file"' in page and 'id="u-go"' in page
+    assert "async function listClips" in page
+    assert "no camera" in page, "an unsolved clip must be listed and labelled"
+    assert re.search(r'listClips\([^)]*\)', page), "the clip selector must go through listClips"
