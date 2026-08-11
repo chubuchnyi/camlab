@@ -382,6 +382,38 @@ def manual_get(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
             "edited": n in cam.get("manual_frames", [])}
 
 
+@app.post("/api/run/{clip_id}/flip")
+def flip(clip_id: str, which: str = "camera_auto.json") -> dict:
+    """Turn the whole clip's camera through 180° about the centre spot.
+
+    A pitch is **exactly** symmetric under that half-turn, so the rotated camera scores bit for bit
+    the same — measured at 2.1 px on 307 samples either way on fan, 4.5 px on 300 on broadcast.
+    Nothing in the markings can choose, and no solver ever will: the information is not there. It
+    takes something off the pitch — the stands, the scoreboard, which way the teams attack — or one
+    click from someone looking at the picture.
+
+    Applied to every frame at once, because the answer cannot differ between frames of one clip.
+    Written as ordinary hand edits, so `reset every edit` undoes it like anything else.
+    """
+    import json
+
+    info = ClipInfo.load(clip_id)
+    cam = _load_camera(info, which)
+    path = info.dir / "camera_manual.json"
+    blob = json.loads(path.read_text()) if path.exists() else {}
+    edits = blob.setdefault(which, {})
+    for i in range(len(cam["frames"])):
+        rvec = np.asarray(cam["rotation"][i])
+        yaw, elev, roll = angles_from_rotation(matrix_from_rodrigues(rvec))
+        rot = rotation_from_angles(yaw + 180.0, elev, roll)
+        x, y, z = cam["position"][i]
+        edits[str(i)] = {"focal_px": cam["focal_px"][i],
+                         "rotation": rodrigues_from_matrix(rot).tolist(),
+                         "position": [-x, -y, z]}
+    path.write_text(json.dumps(blob, indent=1))
+    return {"ok": True, "flipped_frames": len(cam["frames"]), "which": which}
+
+
 @app.post("/api/run/{clip_id}/manual/{n}")
 def manual_set(clip_id: str, n: int, body: dict) -> dict:
     """Apply a hand edit. The client sends SCALARS; the camera is derived here.

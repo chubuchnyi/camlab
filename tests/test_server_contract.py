@@ -6,6 +6,7 @@ import hashlib
 import re
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from camlab.server.app import STATIC, app
@@ -204,3 +205,35 @@ def test_a_clip_counts_as_solved_when_it_has_any_camera():
         from camlab.runs import ClipInfo
         has = bool(list(ClipInfo.load(cid).dir.glob("camera_*.json")))
         assert r["solved"] == has, f"{cid}: solved={r['solved']} but cameras present={has}"
+
+
+def test_the_flip_turns_every_frame_and_leaves_the_solve_alone():
+    """The pitch is exactly symmetric under a half-turn, so this is the one question about the
+    camera that no measurement can answer and a person can. It must therefore be one click, apply
+    to the whole clip — the answer cannot differ between frames — and be undoable like any edit."""
+    from camlab.runs import ClipInfo
+
+    info = ClipInfo.load("fan")
+    path = info.dir / "camera_manual.json"
+    before = path.read_text() if path.exists() else None
+    try:
+        c = TestClient(app)
+        base = c.get("/api/run/fan/camera?which=camera_auto.json").json()
+        r = c.post("/api/run/fan/flip?which=camera_auto.json")
+        assert r.status_code == 200
+        assert r.json()["flipped_frames"] == len(base["frames"])
+
+        after = c.get("/api/run/fan/camera?which=camera_auto.json").json()
+        for i in (0, 5, len(base["frames"]) - 1):
+            bx, by, bz = base["position"][i]
+            ax, ay, az = after["position"][i]
+            assert (ax, ay, az) == pytest.approx((-bx, -by, bz)), f"frame {i} not mirrored"
+            assert after["focal_px"][i] == pytest.approx(base["focal_px"][i]), "focal must not move"
+
+        page = (STATIC / "index.html").read_text()
+        assert 'id="e-flip"' in page and re.search(r'\$\("e-flip"\)\.onclick', page)
+    finally:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(before)

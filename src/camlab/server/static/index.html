@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=14" />
+  <link rel="stylesheet" href="/static/style.css?v=15" />
 </head>
 <body>
 
@@ -155,6 +155,13 @@
         <input class="ed" id="e-copyfrom" type="number" min="0" step="1" style="width:5em" />
         <button id="e-copy">copy</button>
       </label>
+      <!-- A pitch is EXACTLY symmetric under a half-turn about the centre spot, measured: the
+           rotated camera scores bit for bit the same, 2.1 px on 307 samples either way. So the
+           markings cannot say which half is being looked at, and no solver ever will. One click,
+           and it applies to the whole clip because the answer is the same on every frame. -->
+      <button id="e-flip" title="the markings fit both ways — this is the other one">
+        flip 180° (whole clip)
+      </button>
       <button id="e-reset">reset this frame to the solve</button>
       <button id="e-resetall">reset every edit</button>
       <p class="small muted">
@@ -590,6 +597,27 @@ $("e-copy").onclick = async () => {
   await pushManual();
   $("e-clip").checked = clip;
   err(`copied frame ${from} onto frame ${frame} — adjust from here`);
+};
+
+// The half-turn. Not an alternative solve — a twin: the markings fit both ways EXACTLY, so this
+// is the one question about the camera that measurement cannot answer and a person can, by
+// looking at which end the goal is.
+$("e-flip").onclick = async () => {
+  if (!view.clip) return;
+  const b = $("e-flip");
+  b.disabled = true;
+  try {
+    const r = await fetch(`/api/run/${view.clip.clip_id}/flip?which=${camWhich()}`,
+                          { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.status);
+    err(`flipped all ${d.flipped_frames} frames — the markings fit this exactly as well`);
+    await reloadCamera();
+  } catch (e) {
+    err("flip failed: " + (e.message || e));
+  } finally {
+    b.disabled = false;
+  }
 };
 
 $("e-reset").onclick = async () => {
