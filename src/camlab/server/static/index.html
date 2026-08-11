@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=11" />
+  <link rel="stylesheet" href="/static/style.css?v=12" />
 </head>
 <body>
 
@@ -48,6 +48,8 @@
       <div id="btools">
         <label><input type="checkbox" id="T-lines" checked /> line error</label>
         <label><input type="checkbox" id="T-segs" /> detected lines</label>
+        <label title="angle between each model marking and the paint it matched, in blue">
+          <input type="checkbox" id="T-ang" checked /> angles</label>
         <label><input type="checkbox" id="T-paint" /> paint mask</label>
         <label>finder
           <select id="T-method">
@@ -379,16 +381,60 @@ async function drawLineError(n) {
       }
     }
   }
+  // Angles, in blue. A distance alone cannot see a line pivoted about its middle: the offset at
+  // the centre of the overlap is then zero while the two ends are far apart, and the marking
+  // geometry is broken in a way the yellow numbers all report as perfect.
+  //
+  // Drawn TRUE, not exaggerated. Both rays start at the point the offset was measured from, the
+  // dashed one along the model marking and the solid one along the paint it matched, so a 1 deg
+  // error looks like 1 deg — nearly coincident — and the label carries the number. Amplifying the
+  // wedge to make it legible would make the picture unagreeable with the ruler, which is the one
+  // property this overlay exists to have.
+  if ($("T-ang").checked) {
+    const unit = (a, b) => {
+      const dx = b[0] - a[0], dy = b[1] - a[1], n = Math.hypot(dx, dy) || 1;
+      return [dx / n, dy / n];
+    };
+    for (const L of d.lines) {
+      if (L.angle_deg == null || !L.p1 || !L.found) continue;
+      const mu = unit(L.model[0], L.model[1]);
+      let fu = unit(L.found[0], L.found[1]);
+      if (fu[0] * mu[0] + fu[1] * mu[1] < 0) fu = [-fu[0], -fu[1]];   // same sense, not 180 off
+      const o = L.p1, R = 90, r = 34;
+      svg.appendChild(svgEl("line", {
+        x1: o[0], y1: o[1], x2: o[0] + mu[0] * R, y2: o[1] + mu[1] * R, class: "angref",
+      }));
+      svg.appendChild(svgEl("line", {
+        x1: o[0], y1: o[1], x2: o[0] + fu[0] * R, y2: o[1] + fu[1] * R, class: "ang",
+      }));
+      const a0 = Math.atan2(mu[1], mu[0]), a1 = Math.atan2(fu[1], fu[0]);
+      const sweep = ((a1 - a0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;   // shortest, signed
+      if (Math.abs(L.angle_deg) > 0.5) {                                   // below this an arc is
+        const s0 = [o[0] + Math.cos(a0) * r, o[1] + Math.sin(a0) * r];     // under a pixel long
+        const s1 = [o[0] + Math.cos(a0 + sweep) * r, o[1] + Math.sin(a0 + sweep) * r];
+        svg.appendChild(svgEl("path", {
+          d: `M ${s0[0]} ${s0[1]} A ${r} ${r} 0 0 ${sweep > 0 ? 1 : 0} ${s1[0]} ${s1[1]}`,
+          class: "ang",
+        }));
+      }
+      const t = svgEl("text", {
+        x: o[0] + mu[0] * R - mu[1] * 14, y: o[1] + mu[1] * R + mu[0] * 14, class: "anglbl",
+      });
+      t.textContent = `${L.angle_deg > 0 ? "+" : ""}${L.angle_deg.toFixed(1)}°`;
+      svg.appendChild(t);
+    }
+  }
   const s = d.summary;
   $("lineout").textContent = s
     ? `${d.method} · ${d.segments.length} lines · ` +
       `worst ${s.worst_offset_px == null ? "—" : s.worst_offset_px.toFixed(0)} px · ` +
       `median ${s.median_offset_px == null ? "—" : s.median_offset_px.toFixed(0)} px · ` +
+      `worst angle ${s.worst_angle_deg == null ? "—" : s.worst_angle_deg.toFixed(1)}° · ` +
       `${s.n_matched}/${s.n_lines} lines${s.n_missed ? `, ${s.n_missed} with no paint` : ""}`
     : (d.note || "");
 }
 
-for (const id of ["T-lines", "T-segs", "T-method"]) {
+for (const id of ["T-lines", "T-segs", "T-ang", "T-method"]) {
   $(id).onchange = () => drawLineError(frame);
 }
 $("T-paint").onchange = (e) => {
@@ -483,6 +529,12 @@ for (const k of EDF) {
   // `change`, not `input`: re-measuring is a cv2 pass per keystroke otherwise.
   el.onchange = () => pushManual();
 }
+// Ticking the box IS the action, not a mode that arms something for later. It used to be neither:
+// `pushManual` only ever ran from a field's `onchange`, so ticking "position applies to the whole
+// clip" did nothing at all until the next keystroke in a coordinate — and by then the human had
+// already concluded it was broken, which it was. Unticking is not the inverse and must not undo:
+// the edits are written and removing them is what the reset buttons are for.
+$("e-clip").onchange = (e) => { if (e.target.checked) pushManual(); };
 $("e-reset").onclick = async () => {
   await fetch(`/api/run/${view.clip.clip_id}/manual/${frame}?which=${camWhich()}&scope=frame`,
               {method: "DELETE"});

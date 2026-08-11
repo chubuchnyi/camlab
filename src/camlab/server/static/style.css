@@ -95,6 +95,14 @@ html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
 #bsvg .off   { stroke: #ffd24a; stroke-width: 3; }
 #bsvg .lbl   { fill: #ffd24a; font: 600 15px system-ui, sans-serif; paint-order: stroke;
                stroke: #000; stroke-width: 4px; }
+/* Angle between a model marking and the paint it was matched to. Blue, so it never reads as one
+   of the yellow offsets: an offset of zero with a large angle is a line pivoted about its middle,
+   which the distance alone averages away to nothing. `.angref` is the model's own direction drawn
+   from the same point, so the wedge is a comparison and not a lone ray. */
+#bsvg .ang    { stroke: #4aa8ff; stroke-width: 2.5; fill: none; }
+#bsvg .angref { stroke: #4aa8ff; stroke-width: 1; opacity: .5; stroke-dasharray: 4 4; }
+#bsvg .anglbl { fill: #7cc4ff; font: 600 14px system-ui, sans-serif; paint-order: stroke;
+                stroke: #000; stroke-width: 4px; }
 #bsvg .ruler { stroke: #fff; stroke-width: 2; stroke-dasharray: 6 4; }
 #bsvg .rlbl  { fill: #fff; font: 600 16px system-ui, sans-serif; paint-order: stroke;
                stroke: #000; stroke-width: 4px; }

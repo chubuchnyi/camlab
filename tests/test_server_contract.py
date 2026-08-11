@@ -91,3 +91,56 @@ def test_the_residual_endpoint_is_actually_reachable():
         "opencv is missing — install with the `[cv]` extra. camlab's ground truth is the paint in "
         "the frame, and finding it is a cv2 pipeline."
     )
+
+
+def test_the_whole_clip_checkbox_is_wired_to_something():
+    """It was not, and a human found out by ticking it and watching nothing happen.
+
+    `pushManual()` ran only from an edit field's `onchange`, so "position applies to the whole clip"
+    armed a mode that took effect on the next keystroke in a coordinate — which is indistinguishable
+    from a dead control. The server side was correct the whole time, which is why this is a page
+    test: the bug was that nothing ever called the working endpoint.
+    """
+    page = (STATIC / "index.html").read_text()
+    assert 'id="e-clip"' in page
+    assert re.search(r'\$\("e-clip"\)\.onchange\s*=', page), (
+        "ticking the box must do something by itself, not arm a mode for a later keystroke"
+    )
+
+
+def test_a_clip_scoped_edit_moves_every_frame_and_keeps_their_own_aim():
+    """Position is shared across a clip; orientation and focal are not.
+
+    Copying one frame's aim to all of them would be a different camera, not an edit — the operator
+    panned. So a clip-scoped write must set one position everywhere and leave each frame's own
+    rotation and focal alone.
+    """
+    import json
+
+    from camlab.runs import ClipInfo
+
+    info = ClipInfo.load("fan")
+    path = info.dir / "camera_manual.json"
+    before = path.read_text() if path.exists() else None
+    try:
+        c = TestClient(app)
+        cur = c.get("/api/run/fan/manual/28?which=camera_auto.json").json()
+        body = {"which": "camera_auto.json", "scope": "clip",
+                **{k: cur[k] for k in ("x", "y", "z", "yaw", "elev", "roll", "focal_px")}}
+        r = c.post("/api/run/fan/manual/28", json=body)
+        assert r.status_code == 200 and r.json()["scope"] == "clip"
+
+        edits = json.loads(path.read_text())["camera_auto.json"]
+        n_frames = len(c.get("/api/run/fan/camera").json()["frames"])
+        assert len(edits) == n_frames, "clip scope means every frame, not just this one"
+
+        pos = [e["position"] for e in edits.values()]
+        assert all(p == pos[0] for p in pos), "one position for the whole clip"
+
+        focals = {round(e["focal_px"]) for e in edits.values()}
+        assert len(focals) > 1, "each frame keeps its own focal — the operator zoomed"
+    finally:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(before)
