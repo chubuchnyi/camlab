@@ -136,3 +136,57 @@ markings do not contain.
 
 What is NOT worth another round: tuning the ranking. Two rounds of that moved the answer sideways
 — 113 m to 54 m, one score better and one worse — without ever landing it.
+
+---
+
+# #18: the arcs. What worked, what did not, and where I stopped
+
+**Modelled and scoreable now.** `measure/ellipse.arc_markings()` returns the two curved markings —
+derived from the pitch model by the same 5 cm test `straight_markings()` excludes them with, not
+hardcoded — and `arc_paint_distance()` scores a camera by where it puts them.
+
+**It separates.** fan frame 8:
+
+| camera | arcs to nearest paint | arc points in frame |
+|---|---|---|
+| **truth** | **1.5 px** | 35 |
+| line-fitted candidate | 7.9 px | 17 |
+| line-fitted candidate | 5.7 px | 12 |
+| line-fitted candidate | — | **0** — the arcs are off-frame entirely |
+
+That last row is the strongest part: a wrong camera does not merely score badly on the arcs, it
+often fails to put them in the picture at all, which is a disqualification rather than a number.
+
+**Detecting the ellipse does not work, and the failure is worth knowing.** Two attempts:
+
+- RANSAC conic on painted pixels with the detected straight lines removed. Returns something with
+  200–600 inliers at under 2 px RMS on every real frame, and it is not the arc: axis ratios of 69:1
+  and 970:1, and after an eccentricity bound, axes four times too large. What remains after the
+  lines are removed is still mostly line-like, and the largest consistent conic through it is a
+  shallow curve through noise.
+- Connected components with a parabola fit — the method that *did* find the arc when measuring lens
+  distortion. Finds no curved run at all here: the arc's paint arrives in fragments too short.
+
+And it did not matter. The arc is present — projecting it through a known camera lands all 35 of
+its points in frame with paint a median of 1.5 px away — so there was never a detection problem to
+solve. **A camera hypothesis already says where the arc should be.** Asking whether paint is there
+is cheaper and decisive. I built a detector for a question that did not need one.
+
+## Where the bootstrap stands after all this
+
+Four ranking attempts, each measured:
+
+| ranking | winner's distance from the truth |
+|---|---|
+| line objective, single frame | 113 m |
+| + physical gate, ranked by paint | 113 m |
+| + carried to two probe frames | 20.9 m |
+| + pooled median instead of worst line | 54 m |
+| + arcs required to land on paint | 128 m, but the focal is finally in the right range |
+
+The arc constraint does what it was meant to — candidates now come back at focal 2096–3718 against
+a truth of 2828, where before they were at 300–1600 — and the winner is still not the truth.
+
+**Stopping here.** Five rounds of ranking have moved the answer around without landing it, and the
+thing that has landed it every time is one hand-aligned frame: 2.11 px on 120 of 120, measured
+repeatedly. The automatic route needs a different idea, not another weight.

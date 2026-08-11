@@ -41,10 +41,11 @@ from camlab.core.angles import (  # noqa: E402
     rodrigues_from_matrix,
     rotation_from_angles,
 )
+from camlab.measure.ellipse import arc_paint_distance  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
-from camlab.measure.paint import paint_masks  # noqa: E402
+from camlab.measure.paint import centreline_pixels, paint_masks  # noqa: E402
 from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
-from camlab.measure.residual import frame_residual  # noqa: E402
+from camlab.measure.residual import frame_residual, world_to_image  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.bootstrap import hypotheses  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
@@ -73,6 +74,11 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=40, help="candidates taken past the single frame")
     ap.add_argument("--min-samples", type=int, default=100,
                     help="loose absolute coverage floor; NOT relative to the best candidate")
+    ap.add_argument("--no-arcs", dest="require_arcs", action="store_false",
+                    help="do not require the curved markings to land on paint")
+    ap.add_argument("--max-arc-px", type=float, default=6.0,
+                    help="how far the projected centre circle and penalty arc may sit from the "
+                         "nearest paint. The true camera on fan frame 8 sits at 1.5 px")
     ap.add_argument("--max-missing", type=float, default=0.05,
                     help="reject a camera predicting markings on turf with no paint under them, "
                          "beyond this fraction. The true camera on fan frame 8 sits at 0.3%%")
@@ -89,10 +95,13 @@ def main() -> None:
     if len(probes) < 2:
         raise SystemExit(f"{args.clip} has {info.n_frames} frames — not enough to carry into")
 
-    seg = {}
+    from scipy.spatial import cKDTree
+
+    seg, tree = {}, {}
     for i in probes:
         d, s = paint_masks(cv2.imread(str(info.frame_path(i))))
         seg[i] = detect_segments(d, s, method="hough")
+        tree[i] = cKDTree(centreline_pixels(d))
     print(f"== {args.clip}: anchor {a}, carrying candidates to {probes[1:]}")
     print(f"   segments per probe frame: {[len(seg[i]) for i in probes]}")
 
@@ -122,6 +131,17 @@ def main() -> None:
         r = frame_residual(info.frame_path(i), f, rv, c, frame=i, cx=cx, cy=cy)
         return r.median_px, r.n, r.n_unmatched / max(r.n, 1)
 
+    def arcs(i, f, rv, c):
+        """The curved markings, which the straight ones cannot substitute for.
+
+        A pitch is exactly symmetric under a half-turn and its focal trades against its distance,
+        so many cameras fit the LINES. Far fewer also put the centre circle and the penalty arc
+        where paint actually is — and a camera that puts them off-frame entirely has not scored
+        badly, it has disqualified itself.
+        """
+        h = world_to_image(f, rv, c, info.width, info.height, cx=cx, cy=cy)
+        return arc_paint_distance(h, tree[i], info.width, info.height)
+
     cands = []
     for h in hypotheses(seg[a], info.width, info.height, cx, cy,
                         max_hypotheses=args.max_hypotheses):
@@ -130,8 +150,13 @@ def main() -> None:
         rv = rodrigues_from_matrix(h.rotation)
         r = refit_frame_lm(seg[a], h.focal_px, rv, h.position, info.width, info.height, cx, cy)
         w, n, miss = paint(a, r.focal_px, r.rotation, r.position)
-        if np.isfinite(w) and miss <= args.max_missing:
-            cands.append((w, n, r.focal_px, r.rotation, r.position))
+        ad, an = arcs(a, r.focal_px, r.rotation, r.position)
+        if not (np.isfinite(w) and miss <= args.max_missing):
+            continue
+        if args.require_arcs and not (an >= 8 and ad <= args.max_arc_px):
+            continue
+        cands.append((w + (0.0 if not np.isfinite(ad) else ad), n,
+                      r.focal_px, r.rotation, r.position))
     if not cands:
         raise SystemExit("no plausible camera at all on the anchor frame")
     # Only a loose ABSOLUTE floor. Coverage was briefly used relative to the best candidate and
