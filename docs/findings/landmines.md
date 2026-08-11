@@ -52,6 +52,11 @@ Ordered by how much they cost.
   (`/vol/camlab_runs`), and `scripts/deploy.sh` ships `git archive HEAD` — so a human's manual
   alignment is invisible locally and a redeploy does not carry it back. Pull it before assuming
   `camera_manual.json` is empty. (`the-search-fails-not-the-model.md`)
+- **A clip-scoped position edit silently destroyed a hand-aligned frame.** "position applies to the
+  whole clip" writes the shared position over EVERY frame, including ones tuned by eye. The
+  rotation survives, but a rotation aimed from a different point is a worse camera than the solve
+  it replaced: frame 28 went 3.6 px → 41.1 px, against 32.2 for the untouched solve. It now backs
+  the file up and reports how many hand positions it displaced.
 - **A good camera seed is worth about three frames.** Chaining a refit from a hand-aligned frame
   gives 5.5, 8.8, 14.7 px on the next three and is back to ~50 px by the fifth. Judging a seeding
   strategy on its median over twenty frames hides that entirely — it reads 50.4 → 49.1, "no

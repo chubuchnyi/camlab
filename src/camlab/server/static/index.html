@@ -518,7 +518,15 @@ async function pushManual() {
     method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
   });
   if (!r.ok) { err(`edit rejected: ${(await r.json()).detail || r.status}`); return; }
-  err("");
+  const out = await r.json();
+  // Say out loud when a clip-wide position has just replaced positions somebody set by eye. The
+  // rotation on those frames was aimed from the old point and is now wrong for the new one, so
+  // this is not a partial edit — it can leave a hand-tuned frame worse than the untouched solve.
+  err(out.displaced_hand_positions
+    ? `clip position applied — it replaced ${out.displaced_hand_positions} hand-set ` +
+      `position${out.displaced_hand_positions > 1 ? "s" : ""}; previous edits saved to ` +
+      `${out.backup}. Those frames need their aim redone.`
+    : "");
   await reloadCamera();          // straight back through the same path any solve takes
 }
 

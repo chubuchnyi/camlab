@@ -348,6 +348,22 @@ def manual_set(clip_id: str, n: int, body: dict) -> dict:
     edits = blob.setdefault(which, {})
     scope = body.get("scope", "frame")
     targets = [n] if scope == "frame" else list(range(len(cam["frames"])))
+
+    # A clip-scoped write replaces the position on EVERY frame, including ones a human aligned by
+    # eye. It did that silently once and destroyed a frame that had been tuned to 3.6 px — the
+    # rotation survived, but a rotation aimed from a different point is a worse camera than the
+    # solve it replaced (that frame went 3.6 -> 41.1 px, against 32.2 for the untouched solve).
+    # So: back the file up before touching it, and report how many hand positions were displaced
+    # so the caller can ask first.
+    displaced = 0
+    if scope != "frame":
+        for i in targets:
+            prev = edits.get(str(i))
+            if i != n and prev is not None and list(prev["position"]) != pos:
+                displaced += 1
+        if path.exists():
+            (info.dir / "camera_manual.bak.json").write_text(path.read_text())
+
     for i in targets:
         # "clip" scope moves only the POSITION: orientation and focal are per-frame by definition,
         # and copying one frame's aim to the whole clip would be a different camera, not an edit.
@@ -359,7 +375,9 @@ def manual_set(clip_id: str, n: int, body: dict) -> dict:
             base_r, base_f = prev["rotation"], prev["focal_px"]
         edits[str(i)] = {"focal_px": base_f, "rotation": list(base_r), "position": pos}
     path.write_text(json.dumps(blob, indent=1))
-    return {"ok": True, "edited_frames": len(edits), "scope": scope}
+    return {"ok": True, "edited_frames": len(edits), "scope": scope,
+            "displaced_hand_positions": displaced,
+            "backup": "camera_manual.bak.json" if scope != "frame" else None}
 
 
 @app.delete("/api/run/{clip_id}/manual/{n}")
