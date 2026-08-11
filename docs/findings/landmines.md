@@ -52,6 +52,10 @@ Ordered by how much they cost.
   (`/vol/camlab_runs`), and `scripts/deploy.sh` ships `git archive HEAD` — so a human's manual
   alignment is invisible locally and a redeploy does not carry it back. Pull it before assuming
   `camera_manual.json` is empty. (`the-search-fails-not-the-model.md`)
+- **`deploy.sh` ships HEAD, not the working tree** — it says so in its own header, and it still
+  caught me: the "copy from frame" control was deployed BEFORE it was committed, so the box served
+  the version without it and a human reported the button missing. Commit, then deploy, and check
+  `curl http://localhost:8100/ | grep <the-new-id>` rather than trusting a green deploy.
 - **A fix that is committed but not deployed is not a fix.** The clip-wide position control was
   repaired locally and struck a second time the same day, on the box, against a solve shipped an
   hour earlier — because `deploy.sh` had not been run since the commit. It took that camera from
