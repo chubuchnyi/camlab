@@ -52,6 +52,13 @@ Ordered by how much they cost.
   (`/vol/camlab_runs`), and `scripts/deploy.sh` ships `git archive HEAD` — so a human's manual
   alignment is invisible locally and a redeploy does not carry it back. Pull it before assuming
   `camera_manual.json` is empty. (`the-search-fails-not-the-model.md`)
+- **A fix that is committed but not deployed is not a fix.** The clip-wide position control was
+  repaired locally and struck a second time the same day, on the box, against a solve shipped an
+  hour earlier — because `deploy.sh` had not been run since the commit. It took that camera from
+  21.9 px to 41.7 px, 83 of 120 frames worse. Deploy after fixing something a human touches.
+- **"The backend is down" was a dead ssh tunnel.** The container was up, the WSL IP unchanged, only
+  the local forward had gone. `ss -ltn | grep 8100` before anything else; the tunnel has no
+  supervisor and nothing restarts it.
 - **A clip-scoped position edit silently destroyed a hand-aligned frame.** "position applies to the
   whole clip" writes the shared position over EVERY frame, including ones tuned by eye. The
   rotation survives, but a rotation aimed from a different point is a worse camera than the solve

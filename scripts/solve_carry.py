@@ -42,9 +42,13 @@ from camlab.solve.refit import refit_frame  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("clip", nargs="?", default="fan")
-    ap.add_argument("--anchor", type=int, default=0)
+    ap.add_argument("--anchor", default="0",
+                    help="comma-separated frame numbers; each frame is carried from its nearest")
     ap.add_argument("--seed", default="camera_auto.json")
     ap.add_argument("--out", default="camera_carry.json")
+    ap.add_argument("--free-position", action="store_true",
+                    help="let the refit move the camera centre too. Off by default: the carry's "
+                         "own derivation assumes a fixed centre, and freeing it is what drifted")
     args = ap.parse_args()
 
     t0 = time.time()
@@ -56,10 +60,13 @@ def main() -> None:
     hand_path = next((Path(__file__).resolve().parent.parent / "calib")
                      .glob(f"{args.clip}-hand-aligned-*.json"), None)
     hand = json.loads(hand_path.read_text()).get(args.seed, {}) if hand_path else {}
-    anchored_by_hand = str(args.anchor) in hand
+    anchors = sorted({int(a) for a in str(args.anchor).split(",") if a.strip() != ""})
+    if not anchors or anchors[0] < 0 or anchors[-1] >= n:
+        raise SystemExit(f"anchors {anchors} must all be within 0..{n - 1}")
+    by_hand = [a for a in anchors if str(a) in hand]
 
-    print(f"== {args.clip}: {n} frames, anchor {args.anchor} "
-          f"({'hand-aligned' if anchored_by_hand else 'from the solve'}), K = ({cx:.0f}, {cy:.0f})")
+    print(f"== {args.clip}: {n} frames, anchors {anchors} "
+          f"({len(by_hand)} hand-aligned: {by_hand}), K = ({cx:.0f}, {cy:.0f})")
 
     pairs = measure_pairs({f: info.frame_path(f) for f in range(n)}, gaps=(1,))
     h_of = {(p.i, p.j): p for p in pairs}
@@ -75,35 +82,54 @@ def main() -> None:
     pos = np.array(seed["position"], float).copy()
     drift = np.zeros(n, int)
 
-    if anchored_by_hand:
-        e = hand[str(args.anchor)]
-        focal[args.anchor] = e["focal_px"]
-        rot[args.anchor] = e["rotation"]
-        pos[args.anchor] = e["position"]
-    else:
-        r = refit_frame(segs(args.anchor), focal[args.anchor], rot[args.anchor],
-                        pos[args.anchor], info.width, info.height, cx, cy)
-        focal[args.anchor], rot[args.anchor], pos[args.anchor] = r.focal_px, r.rotation, r.position
+    # Each frame belongs to its NEAREST anchor, and no chain runs past the midpoint to the next
+    # one. Drift is what breaks this method — one anchor held ~60 frames on the fan clip and then
+    # collapsed — so the longest chain any frame sits on is what decides its quality, and halving
+    # it by adding an anchor halves the accumulation. `carry_drift` records that distance per frame
+    # so a reader can distrust the far ones without re-deriving which they are.
+    for a in anchors:
+        if str(a) in hand:
+            e = hand[str(a)]
+            focal[a], rot[a], pos[a] = e["focal_px"], np.asarray(e["rotation"], float), \
+                np.asarray(e["position"], float)
+        else:
+            r = refit_frame(segs(a), focal[a], rot[a], pos[a], info.width, info.height, cx, cy)
+            focal[a], rot[a], pos[a] = r.focal_px, r.rotation, r.position
+        drift[a] = 0
 
-    # Outward in both directions, so the anchor is not required to be frame 0. A backward step uses
-    # the same pair inverted: H(j->i) is H(i->j)^-1 for a homography, exactly.
-    for direction in (1, -1):
-        i = args.anchor
-        while 0 <= i + direction < n:
-            j = i + direction
-            f0, rv0, c0 = focal[i], rot[i], pos[i]
-            p = h_of.get((min(i, j), max(i, j)))
-            if p is not None:
-                m = np.linalg.inv(p.h) if direction < 0 else p.h
-                moved = carry(f0, rv0, c0, m, cx, cy)
-                if moved is not None:
-                    f0, rv0, c0 = moved.focal_px, moved.rotation, moved.position
-            r = refit_frame(segs(j), f0, rv0, c0, info.width, info.height, cx, cy)
-            focal[j], rot[j], pos[j] = r.focal_px, r.rotation, r.position
-            drift[j] = abs(j - args.anchor)
-            i = j
-            if abs(j - args.anchor) % 20 == 0:
-                print(f"      {j}/{n} ...", flush=True)
+    bounds = []
+    for idx, a in enumerate(anchors):
+        lo = 0 if idx == 0 else (anchors[idx - 1] + a) // 2 + 1
+        hi = n - 1 if idx == len(anchors) - 1 else (a + anchors[idx + 1]) // 2
+        bounds.append((lo, hi))
+
+    # Outward in both directions, so an anchor need not be frame 0. A backward step uses the same
+    # pair inverted: H(j->i) is H(i->j)^-1 for a homography, exactly.
+    for a, (lo, hi) in zip(anchors, bounds, strict=True):
+        for direction, stop in ((1, hi), (-1, lo)):
+            i = a
+            while 0 <= i + direction < n and (i + direction) * direction <= stop * direction:
+                j = i + direction
+                f0, rv0, c0 = focal[i], rot[i], pos[i]
+                p = h_of.get((min(i, j), max(i, j)))
+                if p is not None:
+                    m = np.linalg.inv(p.h) if direction < 0 else p.h
+                    moved = carry(f0, rv0, c0, m, cx, cy)
+                    if moved is not None:
+                        f0, rv0, c0 = moved.focal_px, moved.rotation, moved.position
+                # Position HELD. `carry` is derived from `H = K_j Rj Ri^T K_i^-1`, which is only
+                # true for a camera turning about a fixed centre — and the measurement says that
+                # holds here, the two image axes agreeing on the focal to 0.001. Letting the refit
+                # move the centre anyway contradicts the model that produced the seed, and it is
+                # where the drift came from: the carried solve wandered 2.9 / 4.7 / 2.1 m per axis
+                # with a single-frame step of 11.5 m, which a person in a seat does not do at
+                # 30 fps.
+                r = refit_frame(segs(j), f0, rv0, c0, info.width, info.height, cx, cy,
+                                free_position=args.free_position)
+                focal[j], rot[j], pos[j] = r.focal_px, r.rotation, r.position
+                drift[j] = abs(j - a)
+                i = j
+        print(f"      anchor {a}: frames {lo}..{hi} done", flush=True)
 
     before, after = [], []
     for i in range(n):
@@ -118,8 +144,8 @@ def main() -> None:
         width=info.width, height=info.height, frames=np.asarray(seed["frames"], int),
         focal_px=focal, position=pos, rotation=rot, cx=cx, cy=cy,
         degenerate=seed.get("degenerate", [False] * n),
-        carried_from=args.seed, anchor_frame=args.anchor,
-        anchor_is_hand_aligned=bool(anchored_by_hand),
+        carried_from=args.seed, anchor_frames=anchors,
+        anchors_hand_aligned=by_hand,
         carry_drift=drift.tolist(),
         notes=("Each frame's camera is the previous frame's taken through the measured image-to-"
                "image homography, then refit locally. The chain ACCUMULATES: `carry_drift` is the "
