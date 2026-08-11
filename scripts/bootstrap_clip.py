@@ -73,6 +73,9 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=40, help="candidates taken past the single frame")
     ap.add_argument("--min-samples", type=int, default=100,
                     help="loose absolute coverage floor; NOT relative to the best candidate")
+    ap.add_argument("--max-missing", type=float, default=0.05,
+                    help="reject a camera predicting markings on turf with no paint under them, "
+                         "beyond this fraction. The true camera on fan frame 8 sits at 0.3%%")
     ap.add_argument("--max-hypotheses", type=int, default=60_000)
     ap.add_argument("--out", default="camera_boot.json")
     args = ap.parse_args()
@@ -101,8 +104,23 @@ def main() -> None:
     probes = [a] + [a + g for g in gaps if (a, a + g) in h_of]
 
     def paint(i, f, rv, c):
+        """`(pooled median distance, samples, fraction of markings with no paint under them)`.
+
+        The POOLED median, not `worst_line_px`. That distinction decides everything here. Worst
+        line is the right number for judging a camera that is already close — it is what catches
+        one marking sitting on its neighbour's paint. For telling a right camera from a wrong one
+        it is nearly useless, because a wrong camera can have one bad marking and so can a good
+        one. The pooled median separates them by a factor of seven to nine:
+
+            fan frame 8   truth       median  1.7 px, 0.3 % with no paint under them
+                          a candidate median 16.3 px, 6.8 %
+                          another     median 12.2 px, 2.5 %
+
+        `n_unmatched` is the second half and it is the direct statement of the failure: the camera
+        predicted a marking there and the photograph has no paint there.
+        """
         r = frame_residual(info.frame_path(i), f, rv, c, frame=i, cx=cx, cy=cy)
-        return r.worst_line_px, r.n
+        return r.median_px, r.n, r.n_unmatched / max(r.n, 1)
 
     cands = []
     for h in hypotheses(seg[a], info.width, info.height, cx, cy,
@@ -111,8 +129,8 @@ def main() -> None:
             continue
         rv = rodrigues_from_matrix(h.rotation)
         r = refit_frame_lm(seg[a], h.focal_px, rv, h.position, info.width, info.height, cx, cy)
-        w, n = paint(a, r.focal_px, r.rotation, r.position)
-        if np.isfinite(w):
+        w, n, miss = paint(a, r.focal_px, r.rotation, r.position)
+        if np.isfinite(w) and miss <= args.max_missing:
             cands.append((w, n, r.focal_px, r.rotation, r.position))
     if not cands:
         raise SystemExit("no plausible camera at all on the anchor frame")
@@ -139,8 +157,8 @@ def main() -> None:
             if moved is None:
                 ws.append(float("inf"))
                 continue
-            w, n = paint(i, moved.focal_px, moved.rotation, moved.position)
-            ws.append(w if np.isfinite(w) else float("inf"))
+            w, n, miss = paint(i, moved.focal_px, moved.rotation, moved.position)
+            ws.append(w if (np.isfinite(w) and miss <= args.max_missing) else float("inf"))
             ns.append(n)
         rough.append((max(ws), f0, rv0, p0))
     rough.sort(key=lambda r: r[0])
@@ -160,8 +178,8 @@ def main() -> None:
                     continue
                 f_, rv_, p_ = moved.focal_px, moved.rotation, moved.position
             r = refit_frame_lm(seg[i], f_, rv_, p_, info.width, info.height, cx, cy)
-            w, n = paint(i, r.focal_px, r.rotation, r.position)
-            ws.append(w if np.isfinite(w) else float("inf"))
+            w, n, miss = paint(i, r.focal_px, r.rotation, r.position)
+            ws.append(w if (np.isfinite(w) and miss <= args.max_missing) else float("inf"))
             ns.append(n)
             if i == a:
                 cam = (r.focal_px, r.rotation, r.position)
@@ -173,7 +191,8 @@ def main() -> None:
                        cam[0], cam[1], cam[2], ws))
     scored.sort(key=lambda s: s[0])
 
-    print(f"\n   {'worst probe':>12} {'median':>8} {'min samples':>12}  focal   position")
+    print(f"\n   {'worst probe':>12} {'median':>8} {'min samples':>12}  focal   position"
+          "     (all errors are POOLED medians)")
     for s in scored[:6]:
         print(f"   {s[0]:12.1f} {s[1]:8.1f} {s[2]:12d}  {s[3]:6.0f}  {np.round(s[5], 1)}")
 

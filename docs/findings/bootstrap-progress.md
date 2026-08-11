@@ -77,3 +77,62 @@ distinguishes them on a single frame.
    Note this is **not** what the 113 m above is. The bootstrap's answer is not the mirror of the
    truth either, so there are two separate problems: this ambiguity, which is fundamental, and the
    chooser, which is merely wrong.
+
+
+---
+
+# Where it got to, and where it stopped
+
+**A clip can now be solved with nothing from outside.** Not as well as with a seed from pitch3d,
+and the gap is entirely in the seed.
+
+| seed | chain result |
+|---|---|
+| pitch3d `scene.json` | **2.11 px**, 120/120 frames under 20 px |
+| bootstrap, ranked by worst line | 7.75 px, 100/120 |
+| bootstrap, ranked by pooled median | 13.44 px, 114/120 |
+
+## What made the difference, measured
+
+**The pooled median separates a right camera from a wrong one; `worst_line_px` does not.**
+
+    fan frame 8   truth       pooled median  1.7 px,  0.3 % of markings with no paint under them
+                  candidate                 16.3 px,  6.8 %
+                  candidate                 12.2 px,  2.5 %
+
+Worst line is the right number for judging a camera already close — it is what catches one marking
+sitting on its neighbour's paint. For *discrimination* it is nearly useless, because one bad
+marking is as likely in a good camera as a bad one. Ranking the search by the pooled median instead
+took the winner from 113 m off the truth to 54 m, and adding `n_unmatched` — the direct statement
+"you predicted a marking here and there is no paint here" — as a rejection at 5 % tightened it
+further.
+
+**The truth was always in the candidate pool.** At 200 000 hypotheses there is one 4.8 m from the
+true camera with the focal 11 % off. The generator was never the problem; every failure has been in
+choosing.
+
+## And it still does not find the true camera
+
+The best seed is 21–54 m away with a focal three times off, and it fits the markings almost as
+well as the truth does. That is not a bug to be tuned out. Two degeneracies were measured this
+session and both are real:
+
+- the pitch is **exactly** symmetric under a half-turn, so two cameras fit bit for bit identically;
+- focal and distance trade off on a plane, so a family of cameras along the line of sight fit to
+  within a pixel.
+
+There genuinely are many cameras that fit the markings. Choosing between them needs information the
+markings do not contain.
+
+## Two ways on, and they are different in kind
+
+1. **The centre circle (#18).** It is the one marking that projects to an *ellipse*, and an
+   ellipse's SHAPE — not just its size — pins focal and orientation without any correspondence.
+   It changes as the camera slides sideways or changes focal, which are exactly the two errors the
+   current seed makes. This attacks the cause rather than the ranking.
+2. **One hand-aligned frame per clip.** Measured this session at about sixty frames' worth of
+   anchor, and it gives 2.11 px on 120 of 120. It is not automation, but it is minutes per clip and
+   it works today.
+
+What is NOT worth another round: tuning the ranking. Two rounds of that moved the answer sideways
+— 113 m to 54 m, one score better and one worse — without ever landing it.
