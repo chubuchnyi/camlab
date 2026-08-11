@@ -52,6 +52,10 @@ Ordered by how much they cost.
   (`/vol/camlab_runs`), and `scripts/deploy.sh` ships `git archive HEAD` — so a human's manual
   alignment is invisible locally and a redeploy does not carry it back. Pull it before assuming
   `camera_manual.json` is empty. (`the-search-fails-not-the-model.md`)
+- **The ssh link to the box drops on anything large.** A 130 MB `scp` died at the end, and a
+  `deploy.sh` died mid-build ("client_loop: send disconnect: Broken pipe"). Split large transfers
+  into 30 MB chunks with a retry each and reassemble on the far side; `scripts/tunnel.sh --watch`
+  handles the forward.
 - **`deploy.sh` ships HEAD, not the working tree** — it says so in its own header, and it still
   caught me: the "copy from frame" control was deployed BEFORE it was committed, so the box served
   the version without it and a human reported the button missing. Commit, then deploy, and check
