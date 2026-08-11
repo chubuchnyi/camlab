@@ -36,7 +36,7 @@ from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
 from camlab.measure.residual import frame_residual  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
-from camlab.solve.refit import refit_frame  # noqa: E402
+from camlab.solve.refit import refit_frame, refit_frame_lm  # noqa: E402
 
 
 def main() -> None:
@@ -46,6 +46,10 @@ def main() -> None:
                     help="comma-separated frame numbers; each frame is carried from its nearest")
     ap.add_argument("--seed", default="camera_auto.json")
     ap.add_argument("--out", default="camera_carry.json")
+    ap.add_argument("--nelder-mead", action="store_true",
+                    help="use the old scalar objective. Off by default: measured against eight "
+                         "hand-aligned frames it reaches 13.8 px where the least-squares refit "
+                         "reaches 2.0")
     ap.add_argument("--free-position", action="store_true",
                     help="let the refit move the camera centre too. Off by default: the carry's "
                          "own derivation assumes a fixed centre, and freeing it is what drifted")
@@ -73,6 +77,10 @@ def main() -> None:
     print(f"   {len(pairs)}/{n - 1} consecutive pairs, median reprojection "
           f"{np.median([p.median_px for p in pairs]):.2f} px")
 
+    fit = refit_frame if args.nelder_mead else refit_frame_lm
+    print("   refit: " + ("Nelder-Mead on the scalar objective" if args.nelder_mead
+                          else "Levenberg-Marquardt on the endpoint residuals"))
+
     def segs(i):
         d, s = paint_masks(cv2.imread(str(info.frame_path(i))))
         return detect_segments(d, s, method="hough")
@@ -93,7 +101,7 @@ def main() -> None:
             focal[a], rot[a], pos[a] = e["focal_px"], np.asarray(e["rotation"], float), \
                 np.asarray(e["position"], float)
         else:
-            r = refit_frame(segs(a), focal[a], rot[a], pos[a], info.width, info.height, cx, cy)
+            r = fit(segs(a), focal[a], rot[a], pos[a], info.width, info.height, cx, cy)
             focal[a], rot[a], pos[a] = r.focal_px, r.rotation, r.position
         drift[a] = 0
 
@@ -124,8 +132,8 @@ def main() -> None:
                 # where the drift came from: the carried solve wandered 2.9 / 4.7 / 2.1 m per axis
                 # with a single-frame step of 11.5 m, which a person in a seat does not do at
                 # 30 fps.
-                r = refit_frame(segs(j), f0, rv0, c0, info.width, info.height, cx, cy,
-                                free_position=args.free_position)
+                r = fit(segs(j), f0, rv0, c0, info.width, info.height, cx, cy,
+                        free_position=args.free_position)
                 focal[j], rot[j], pos[j] = r.focal_px, r.rotation, r.position
                 drift[j] = abs(j - a)
                 i = j
