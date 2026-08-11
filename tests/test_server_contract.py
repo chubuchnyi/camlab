@@ -189,3 +189,18 @@ def test_the_page_lists_unsolved_clips_instead_of_hiding_them():
     assert "async function listClips" in page
     assert "no camera" in page, "an unsolved clip must be listed and labelled"
     assert re.search(r'listClips\([^)]*\)', page), "the clip selector must go through listClips"
+
+
+def test_a_clip_counts_as_solved_when_it_has_any_camera():
+    """It used to check for `camera_auto.json` by name.
+
+    broadcast has four cameras — known, carry, healed, fixed — and not one of them is called auto,
+    so it reported itself unsolved and the page refused to open the better-solved of the two clips
+    in the repo.
+    """
+    c = TestClient(app)
+    runs = {r["clip_id"]: r for r in c.get("/api/runs").json()}
+    for cid, r in runs.items():
+        from camlab.runs import ClipInfo
+        has = bool(list(ClipInfo.load(cid).dir.glob("camera_*.json")))
+        assert r["solved"] == has, f"{cid}: solved={r['solved']} but cameras present={has}"

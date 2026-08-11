@@ -119,7 +119,10 @@ def runs() -> list[dict]:
             "fps": info.fps, "n_frames": info.n_frames,
             "first_frame": info.first_frame, "crop": info.crop,
             "source": Path(info.source).name,
-            "solved": (info.dir / "camera_auto.json").exists(),
+            # ANY camera, not `camera_auto.json` specifically. broadcast has four — known, carry,
+            # healed, fixed — and none of them is named auto, so it reported itself unsolved and
+            # the page refused to open the better-solved of the two clips in the repo.
+            "solved": bool(_camera_files(info)),
         })
     return out
 
