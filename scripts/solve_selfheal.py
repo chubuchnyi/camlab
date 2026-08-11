@@ -76,6 +76,7 @@ def main() -> None:
     rot = np.array(src["rotation"], float)
     pos = np.array(src["position"], float)
     healed = np.zeros(n, int)
+    chose: dict[int, str] = {}
 
     seg_cache: dict[int, np.ndarray] = {}
 
@@ -130,15 +131,36 @@ def main() -> None:
             # contiguous blocks, so the one neighbour on offer was far away and whichever side it
             # happened to be on was the only side tried. A human looking at the same file picked
             # exactly those blocks out and said to try the right, then the left, and compare.
+            # Every candidate that costs anything, then let the PAINT choose. A human fixed all
+            # thirteen frames this could not, by plain-copying a neighbour with no carry and no
+            # refit — 3.8 px where carry-then-refit had left 64.0, and 9.8 where it had left 131.8.
+            #
+            # Which is to say the carry is a HYPOTHESIS, not a correction. It assumes the measured
+            # homography is trustworthy across the gap; when it is not, moving the camera by it is
+            # worse than not moving at all. And the refit is a second hypothesis on top: from a
+            # seed in the wrong basin it converges confidently to the wrong answer. Neither is
+            # reliable enough to apply unconditionally, and both are cheap enough to just try.
             cands = []
             left = max((g for g in good if g < i), default=None)
             right = min((g for g in good if g > i), default=None)
-            for j in (right, left):
+
+            def offer(f_, rv_, c_, tag, gap, _i=i, _out=cands):
+                nw, nn, nsp = score(_i, f_, rv_, c_)
+                if np.isfinite(nw):
+                    _out.append((nsp if np.isfinite(nsp) else nw, nw, nn, nsp, gap, tag,
+                                 (f_, rv_, c_)))
+
+            for j, side in ((right, "right"), (left, "left")):
                 if j is None:
                     continue
                 gap = abs(i - j)
-                # One pair, measured for exactly this jump. Composing `gap` consecutive
-                # homographies would accumulate the very error being repaired.
+                # 1. the neighbour's camera, copied verbatim
+                offer(focal[j], rot[j], pos[j], f"copy {side}", gap)
+                # 2. the same, refined here
+                r = refit_frame_lm(segs(i), focal[j], rot[j], pos[j], info.width, info.height,
+                                   cx, cy, free_position=not args.hold_position)
+                offer(r.focal_px, r.rotation, r.position, f"copy+fit {side}", gap)
+                # 3. carried across the gap by the measured homography
                 pairs = measure_pairs({min(i, j): info.frame_path(min(i, j)),
                                        max(i, j): info.frame_path(max(i, j))}, gaps=(gap,))
                 if not pairs:
@@ -147,25 +169,31 @@ def main() -> None:
                 moved = carry(focal[j], rot[j], pos[j], h, cx, cy)
                 if moved is None:
                     continue
+                offer(moved.focal_px, moved.rotation, moved.position, f"carry {side}", gap)
+                # 4. carried, then refined
                 r = refit_frame_lm(segs(i), moved.focal_px, moved.rotation, moved.position,
                                    info.width, info.height, cx, cy,
                                    free_position=not args.hold_position)
-                nw, nn, nsp = score(i, r.focal_px, r.rotation, r.position)
-                if np.isfinite(nw):
-                    # Ranked by the worst SPOT, since that is what decides whether the frame is
-                    # acceptable and what a human actually sees.
-                    cands.append((nsp if np.isfinite(nsp) else nw, nw, nn, nsp, gap, r))
+                offer(r.focal_px, r.rotation, r.position, f"carry+fit {side}", gap)
+
             if not cands:
                 continue
-            _key, nw, nn, nsp, gap, r = min(cands, key=lambda c: c[0])
+            _key, nw, nn, nsp, gap, tag, cam = min(cands, key=lambda c: c[0])
             # The PAINT decides, not the objective the refit just minimised. A camera that talked
             # its own objective down while drifting off the paint is the failure mode this whole
             # repo keeps rediscovering.
             better = (not np.isfinite(w[i]) or nw < w[i]) or (np.isfinite(nsp) and nsp < sp[i])
-            if better and nw <= max(w[i], args.bad_px) and nn >= 0.9 * ns[i]:
-                focal[i], rot[i], pos[i] = r.focal_px, r.rotation, r.position
+            # Coverage is judged against the CLIP's normal, not against this frame's current count.
+            # Judging it against the current count blocked the right answer on every frame that
+            # mattered: a badly aimed camera can score MORE samples than a correct one — frame 69
+            # had 290 while the fix that took it from 64.0 px to 3.8 px had 161, because the wrong
+            # camera still lands markings on the turf, just not where the paint is. Demanding 90 %
+            # of 290 rejected 161 and left the frame broken.
+            if better and nw <= max(w[i], args.bad_px) and nn >= 0.7 * float(np.median(ns)):
+                focal[i], rot[i], pos[i] = cam
                 w[i], ns[i], sp[i] = nw, nn, nsp
                 healed[i] = gap
+                chose[i] = tag
                 fixed += 1
 
         print(f"   round {rnd}: {len(bad)} bad, fixed {fixed}, "
@@ -181,6 +209,7 @@ def main() -> None:
         focal_px=focal, position=pos, rotation=rot, cx=cx, cy=cy,
         degenerate=src.get("degenerate", [False] * n),
         healed_from=args.src, healed_gap=healed.tolist(),
+        healed_by={str(k): v for k, v in chose.items()},
         notes=("Frames the solve lost, re-seeded from their nearest surviving neighbour through a "
                "directly measured image-to-image homography. `healed_gap` is how far each frame "
                "had to reach for a good one — 0 means it was never in trouble."),
@@ -192,6 +221,10 @@ def main() -> None:
     print(f"   worst spot, median  {np.nanmedian(sp0):6.2f} px  ->  {np.nanmedian(sp):6.2f} px")
     print(f"   frames re-seeded    {int((healed > 0).sum())}, reaching up to "
           f"{int(healed.max())} frames away")
+    if chose:
+        from collections import Counter
+        tally = Counter(v.split()[0] for v in chose.values())
+        print("   what won:           " + ", ".join(f"{k} {v}" for k, v in tally.most_common()))
 
 
 if __name__ == "__main__":
