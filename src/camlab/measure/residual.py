@@ -48,14 +48,17 @@ class Residual:
         frame: Frame index.
         median_px: Median over all scored samples. Kept for continuity, no longer the verdict.
         p90_px, max_px: The tail, and the worst single sample.
-        worst_line_px: The **worst marking's own median**. The number to quote.
-        per_line: `{marking index: (median px, samples)}`, so "which line is wrong" is answerable.
+        worst_line_px: The **worst marking's own median**. The number to quote. Unbounded: a
+            reading of 90 px means 90 px, where this used to saturate silently at `match_px`.
+        per_line: `{marking index: (median px, samples, worst sample px)}`. The third entry is
+            what a ruler on the overlay finds, because a human points at a line's worst END, not
+            at its middle — median 13 px against worst sample 74 px on one measured frame.
         n: Samples scored. Read with any median, never without.
         n_projected: Samples that landed in the image at all.
-        n_unmatched: Samples inside the image with **no paint within `match_px`**. These are not
-            "large errors" that a median can absorb — they are markings the frame shows nothing
-            for, and they used to be silently assigned the distance to whatever paint happened to
-            be nearest, however far and however wrong.
+        n_unmatched: Samples inside the image with **no paint within `match_px`**. Still counted,
+            because "this marking has no paint under it at all" and "it is 45 px off" are
+            different claims about the camera even when the number is the same. What changed is
+            that they are no longer *dropped* — see `frame_residual`.
     """
 
     frame: int
@@ -147,11 +150,15 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     space the camera was solved in. Scoring against an uncropped frame silently measures a
     different thing and still returns a plausible number.
 
-    `match_px` bounds the search. Unbounded nearest-paint was the original version and it is a trap
-    in both directions: a marking with no paint near it borrows the distance to something across
-    the frame, and a marking that has drifted onto a neighbouring line finds paint at ~0 and scores
-    perfect. The bound turns the first case into `n_unmatched`, which is reported rather than
-    averaged; the second is only visible per marking, which is what `worst_line_px` is for.
+    `match_px` no longer bounds the search — it only decides what gets **counted** as unmatched.
+    Bounding it dropped those samples from the distances, so no reported number could exceed 40 px
+    and the readout went blank on the frames where the camera was worst. Charging them in full
+    understates (the nearest paint is closer than the paint the marking should have hit) but cannot
+    flatter, which is the direction a metric is allowed to be wrong in.
+
+    The other trap is unchanged and is handled elsewhere: a marking that has drifted onto a
+    NEIGHBOURING line finds paint at ~0 px and scores perfect. Nothing in a distance-to-paint
+    measurement can see that; `line_error.line_errors` is what does, by insisting on correspondence.
     """
     import cv2
 
@@ -159,13 +166,17 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     if bgr is None:
         raise FileNotFoundError(frame_path)
     height, width = bgr.shape[:2]
+    # Both of these used to build a Residual with five of its nine fields and raise TypeError. They
+    # are the paths nothing exercises until a solve goes bad, so the metric crashed exactly on the
+    # cameras worth measuring: `camera_ptz.json` has frames with a non-positive focal, and the
+    # server's residual route returned 500 for them rather than "this camera is broken".
     if not (focal > 0):
-        return Residual(frame, float("nan"), float("nan"), 0, 0)
+        return _empty(frame, 0)
 
     dist, surface = paint_masks(bgr)
     spine = centreline_pixels(dist)
     if not len(spine):
-        return Residual(frame, float("nan"), float("nan"), 0, 0)
+        return _empty(frame, 0)
 
     from scipy.spatial import cKDTree
     tree = cKDTree(spine)
@@ -188,17 +199,24 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     if not len(idx):
         return _empty(frame, int(inside.sum()))
 
-    d, _nn = tree.query(sub, distance_upper_bound=match_px)
-    hit = np.isfinite(d)
-    n_unmatched = int((~hit).sum())
-    if not hit.any():
-        return _empty(frame, int(inside.sum()), n_unmatched)
-    d, own = d[hit], owner[idx[hit]]
+    # NOT bounded at match_px. The bound used to DROP every sample with no paint within it, which
+    # made 40 px a ceiling no reported number could exceed — and a human with a ruler on the overlay
+    # read a larger distance than `worst line` on every frame he tried, because the errors he was
+    # pointing at were the ones being discarded. Worse, a badly wrong camera loses every sample of
+    # every marking and the readout went BLANK (`bench_metric_ceiling.py`: frames 40, 70, 80).
+    #
+    # An unmatched sample's distance to the nearest paint is charged in full. That distance is a
+    # LOWER bound on how wrong the marking is — the true error is to the paint it should have hit,
+    # which is further — so it can understate but never flatter. `n_unmatched` is still reported,
+    # because "this marking has no paint under it" and "it is 45 px off" are different claims.
+    d, _nn = tree.query(sub)
+    n_unmatched = int((d > match_px).sum())
+    own = owner[idx]
 
     per_line = {}
     for k in np.unique(own):
         dk = d[own == k]
-        per_line[int(k)] = (float(np.median(dk)), int(dk.size))
+        per_line[int(k)] = (float(np.median(dk)), int(dk.size), float(dk.max()))
     # A marking held up by three samples is not evidence about that marking; requiring a handful
     # stops the worst-line number being decided by a corner clipping the frame.
     solid = [v[0] for v in per_line.values() if v[1] >= 8]

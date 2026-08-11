@@ -161,6 +161,13 @@ def frame(clip_id: str, n: int) -> FileResponse:
 _RESIDUAL_CACHE: dict[tuple, dict] = {}
 
 
+def _num(v: float) -> float | None:
+    """`None` for NaN. JSON has no NaN, and `json.dumps` emits a bare `NaN` that `JSON.parse`
+    rejects — so a frame the metric could not score used to break the whole panel rather than
+    show a dash."""
+    return None if v != v else round(float(v), 2)
+
+
 @app.get("/api/run/{clip_id}/residual/{n}")
 def residual(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
     """How far this frame's camera puts the pitch from where the pitch is actually painted.
@@ -177,18 +184,27 @@ def residual(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
     key = (clip_id, n, which,
            cam["focal_px"][n], tuple(cam["position"][n]), tuple(cam["rotation"][n]))
     if key not in _RESIDUAL_CACHE:
+        # `cx, cy` from the CAMERA, exactly as the overlay route does. Omitting them defaulted to
+        # the image centre, so on this cropped clip the number was computed with an optical axis
+        # 638 px away from the one the overlay was drawn with — the picture and its score were two
+        # different cameras, and no ruler laid on the picture could ever agree with the number.
         r = frame_residual(info.frame_path(n), cam["focal_px"][n], cam["rotation"][n],
-                           cam["position"][n], frame=n)
+                           cam["position"][n], frame=n, cx=cam["cx"], cy=cam["cy"])
         _RESIDUAL_CACHE[key] = {
             "frame": r.frame,
             # worst_line_px first, because it is the verdict. A pooled median cannot show a camera
             # sitting on one family of lines while the family parallel to it is metres off, and
             # that is the failure a human spotted in the overlay while the median read 7 px.
-            "worst_line_px": None if r.n == 0 else round(r.worst_line_px, 2),
-            "median_px": None if r.n == 0 else round(r.median_px, 2),
-            "p90_px": None if r.n == 0 else round(r.p90_px, 2),
-            "max_px": None if r.n == 0 else round(r.max_px, 2),
-            "per_line": {str(k): [round(v[0], 2), v[1]] for k, v in r.per_line.items()},
+            "worst_line_px": _num(r.worst_line_px),
+            # The worst single sample on a solidly-scored marking — what the ruler finds, because a
+            # human measures a line where it is furthest out, not at the middle where its median is.
+            "worst_place_px": _num(max((v[2] for v in r.per_line.values() if v[1] >= 8),
+                                       default=float("nan"))),
+            "median_px": _num(r.median_px),
+            "p90_px": _num(r.p90_px),
+            "max_px": _num(r.max_px),
+            "per_line": {str(k): [round(v[0], 2), v[1], round(v[2], 2)]
+                         for k, v in r.per_line.items()},
             "n_scored": r.n,
             "n_projected": r.n_projected,
             "n_unmatched": r.n_unmatched,

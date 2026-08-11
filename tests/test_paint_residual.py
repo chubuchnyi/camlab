@@ -169,17 +169,44 @@ def test_the_worst_line_sees_what_a_pooled_median_cannot(fan):
     assert spread > 5, f"markings should disagree by a lot on this camera, got {spread:.1f}x"
 
 
-def test_unmatched_samples_are_reported_not_absorbed(fan):
-    """Unbounded nearest-paint let a marking with no paint near it borrow a distance from across
-    the frame. Bounded, those become a COUNT, which a median cannot dilute."""
+def test_match_px_counts_the_far_samples_it_does_not_discard_them(fan):
+    """`match_px` reports, it does not censor. It used to do both, and that made it a ceiling.
+
+    Dropping every sample with no paint within `match_px` meant no number this module returned
+    could exceed it. A human put a ruler on the overlay and read a larger distance than `worst
+    line` on every frame he tried — he was measuring exactly the samples being thrown away, and on
+    the frames where the camera was worst there was no marking left with enough support to score
+    at all, so the readout went blank instead of loud.
+    """
     info, cam = fan
-    r = frame_residual(info.frame_path(30), cam["focal_px"][30], cam["rotation"][30],
-                       cam["position"][30], frame=30, match_px=40.0)
-    assert r.n_unmatched > 0, "frame 30 has markings the frame shows no paint for"
-    loose = frame_residual(info.frame_path(30), cam["focal_px"][30], cam["rotation"][30],
-                           cam["position"][30], frame=30, match_px=10_000.0)
+    args = (info.frame_path(30), cam["focal_px"][30], cam["rotation"][30], cam["position"][30])
+    r = frame_residual(*args, frame=30, match_px=40.0)
+    loose = frame_residual(*args, frame=30, match_px=10_000.0)
+
+    assert r.n_unmatched > 0, "frame 30 has markings the frame shows no paint within 40 px of"
     assert loose.n_unmatched == 0
-    assert loose.n > r.n, "a looser bound absorbs them into the score instead of reporting them"
+    assert loose.n == r.n, "the bound must change what is COUNTED, never what is scored"
+    assert loose.worst_line_px == r.worst_line_px, "and it must not move the number either"
+    assert r.worst_line_px > 40.0, (
+        f"frame 30's worst marking is {r.worst_line_px:.0f} px out, which the old bounded version "
+        "could not have said: 40 px was the most it could ever report"
+    )
+
+
+def test_the_worst_place_on_a_line_is_reported_not_just_its_middle(fan):
+    """A ruler lands where a line is furthest out; the median lands in the middle.
+
+    That gap is not decoration. On frame 0 the worst marking's median is well under its worst
+    sample, so a human measuring the visible end of that line will always read more than the
+    headline, and be right.
+    """
+    r = _score(fan, 0)
+    solid = [v for v in r.per_line.values() if v[1] >= 8]
+    assert solid, "need markings with real support"
+    worst_median = max(v[0] for v in solid)
+    worst_place = max(v[2] for v in solid)
+    assert worst_place > worst_median, "per_line must carry the worst sample, not only the median"
+    assert all(v[2] >= v[0] for v in solid), "a marking's worst sample cannot beat its own median"
 
 
 class TestParallelFamiliesComeFromTheWorld:

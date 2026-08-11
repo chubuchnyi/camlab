@@ -104,6 +104,11 @@
       <tr class="drv"><th>axis&nbsp;hits</th><td class="num" id="c-ground">—</td></tr>
       <tr class="grp"><td colspan="2">measured against the paint</td></tr>
       <tr><th>worst&nbsp;line</th><td class="num" id="c-resid">—</td></tr>
+      <!-- The worst SPOT on that line, which is what a ruler finds. `worst line` is a median along
+           the marking, so a line that sits on its paint at one end and is far out at the other
+           reads small — and every ruler measurement a human took came back larger than the
+           headline. Both are shown so the disagreement is visible instead of suspicious. -->
+      <tr><th>worst&nbsp;spot</th><td class="num" id="c-residspot">—</td></tr>
       <tr class="drv"><th>median</th><td class="num" id="c-residmed">—</td></tr>
       <tr class="drv"><th>p90 / max</th><td class="num" id="c-resid90">—</td></tr>
       <tr class="drv"><th>scored</th><td class="num" id="c-residn">—</td></tr>
@@ -112,8 +117,11 @@
     <p class="small muted">
       7 free parameters: position, orientation, focal.
       <span class="drvkey">grey</span> = derived, not solved.
-      Principal point is <b>assumed</b> at the image centre — PnLCalib measures one and we
-      overwrite it. No distortion term.
+      Principal point is a <b>parameter of each camera file</b>, not a constant: this clip is
+      cropped off-centre, so its optical axis sits 638 px outside the frame, and four of the five
+      solves in <code>runs/fan</code> were nonetheless fitted at the image centre. A camera is only
+      valid under its own — scoring one against another's is measuring a camera nobody solved.
+      No distortion term, and measurement says one is not needed: real markings bow 0.37 px.
     </p>
     <div id="c-flag"></div>
     <div id="edtools">
@@ -213,6 +221,9 @@ const view = createPitchView({
         const w = d.worst_line_px;
         $("c-resid").textContent = w == null ? "—" : `${w.toFixed(1)} px`;
         $("c-resid").className = "num " + (w > 15 ? "bad" : w > 5 ? "warn" : "ok");
+        const sp = d.worst_place_px;
+        $("c-residspot").textContent = sp == null ? "—" : `${sp.toFixed(1)} px`;
+        $("c-residspot").className = "num " + (sp > 15 ? "bad" : sp > 5 ? "warn" : "ok");
         $("c-residmed").textContent = `${d.median_px.toFixed(1)} px`;
         $("c-resid90").textContent = `${d.p90_px.toFixed(1)} / ${d.max_px.toFixed(1)} px`;
         $("c-residn").textContent = `${d.n_scored} pts, ${(d.coverage * 100).toFixed(0)}% of pitch`;

@@ -31,6 +31,23 @@ Ordered by how much they cost.
 - **Overlap is measured against the full projected length**, so a marking projecting 11,115 px can
   never be 25 % covered by anything, and an exact match at 0.2 px offset is discarded at 24 %.
   82 % of what looked like a detector problem is this. (#16)
+- **A bound that DROPS samples is a ceiling, not a bound.** `match_px = 40` deleted every sample
+  with no paint within it, so no number the paint metric could ever return exceeded 40 px — and on
+  the frames where the camera was worst, no marking kept enough samples to score and the readout
+  went *blank*. A human with a ruler on the overlay read larger than the headline on every frame he
+  tried. He was measuring exactly what was being thrown away. (`the-metric-had-a-ceiling.md`)
+- **A per-marking MEDIAN cannot be checked with a ruler.** A ruler lands where a line is furthest
+  out; the median lands in the middle. Frame 30: worst line 56 px, worst spot 82 px. Report both or
+  the human is right and the number is wrong every time.
+- **Score a camera under its OWN principal point.** The residual route passed none, so it scored at
+  the image centre while the overlay route drew at `cam["cx"], cam["cy"]` — picture and number were
+  two different cameras, and no ruler could have reconciled them.
+- **Four of the five solves in `runs/fan` were fitted at the image centre**; only `camera_axis` uses
+  the real optical axis. Comparing them under one shared K measures a camera nobody solved — the
+  first run of `bench_metric_ceiling.py` did that and ranked `camera_axis` worst on its own K.
+- **`Residual` was built with five of its nine fields on two error paths**, so `frame_residual`
+  raised `TypeError` whenever the focal was non-positive or the frame had no paint. Only bad
+  cameras reach those lines, so the metric crashed precisely on the cameras worth measuring.
 
 ## Geometry and conventions
 
