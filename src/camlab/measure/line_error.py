@@ -37,9 +37,12 @@ from camlab.measure.residual import world_to_image
 #: perpendicular families of a pitch never collide.
 MATCH_ANGLE_DEG = 8.0
 
-#: And they must overlap by at least this fraction of the model line's projected length. Without
-#: it, a short fragment at one end of the pitch can "correspond" to a line at the other end that
-#: happens to be parallel.
+#: And they must overlap by at least this fraction of the model line's **visible** length — the
+#: part inside the image, after `clip_to_image`. Without any such rule, a short fragment at one end
+#: of the pitch can "correspond" to a line at the other end that happens to be parallel. Measured
+#: against the *projected* length instead, which is what this used to do, it rejects markings that
+#: are sitting exactly on their paint: a line running toward the horizon projects to thousands of
+#: pixels and no detector can cover a quarter of that.
 MIN_OVERLAP = 0.25
 
 #: Beyond this the pairing is not believable as the same marking, and the model line is reported as
@@ -128,6 +131,39 @@ def _unit(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return d / (np.linalg.norm(d) + 1e-12)
 
 
+def clip_to_image(seg: np.ndarray, width: int, height: int) -> np.ndarray | None:
+    """The part of a segment inside the image, or None if none of it is. Liang–Barsky.
+
+    Everything downstream must measure against THIS and not against the projected marking, because
+    a marking running toward the horizon projects to thousands of pixels of which a few hundred are
+    on screen. The detector can only ever find the part that is visible, so requiring it to cover a
+    fraction of the whole is requiring the impossible: one measured frame projects marking #1 to
+    11,115 px, where the longest thing any detector could return covers 10 % — and marking #3 was
+    rejected at 24 % overlap while sitting 0.2 px off its paint at 0.7 deg.
+    """
+    p0, p1 = np.asarray(seg, float)
+    d = p1 - p0
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-d[0], p0[0]), (d[0], width - 1 - p0[0]),
+                 (-d[1], p0[1]), (d[1], height - 1 - p0[1])):
+        if abs(p) < 1e-12:
+            if q < 0:
+                return None                     # parallel to this edge and outside it
+            continue
+        t = q / p
+        if p < 0:
+            if t > t1:
+                return None
+            t0 = max(t0, t)
+        else:
+            if t < t0:
+                return None
+            t1 = min(t1, t)
+    if t1 <= t0:
+        return None
+    return np.array([p0 + t0 * d, p0 + t1 * d])
+
+
 def _overlap(model: np.ndarray, found: np.ndarray) -> tuple[float, float, float]:
     """Extent of `found` projected onto `model`'s direction, clipped to `model`. `(lo, hi, len)`."""
     u = _unit(model[0], model[1])
@@ -194,13 +230,18 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
         uv = q[:, :2] / q[:, 2, None]
         if not np.isfinite(uv).all():
             continue
-        # Both ends must be near the frame. A marking crossing the image border is still usable;
-        # one entirely outside it is not evidence about anything.
-        if not ((-width < uv[:, 0]).all() and (uv[:, 0] < 2 * width).all()
-                and (-height < uv[:, 1]).all() and (uv[:, 1] < 2 * height).all()):
+        # Clipped to the image, and everything below uses the clipped segment. This replaces a
+        # "both ends within twice the frame" test that threw away every marking running toward the
+        # horizon — the ones with the most pixels on screen — and it fixes the overlap denominator
+        # at the same time, since both faults were the same mistake: treating the projected length
+        # as the measurable length.
+        vis = clip_to_image(uv, width, height)
+        if vis is None:
             continue
-        if np.linalg.norm(uv[1] - uv[0]) < 40.0:
+        vis_len = float(np.linalg.norm(vis[1] - vis[0]))
+        if vis_len < 40.0:
             continue
+        uv = vis
 
         u = _unit(uv[0], uv[1])
         cands = []
@@ -208,7 +249,7 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
             if abs(float(v @ u)) < np.cos(np.radians(match_angle_deg)):
                 continue
             off, ang, ov, p1, p2 = compare_line(uv, p)
-            if ov < min_overlap * float(np.linalg.norm(uv[1] - uv[0])):
+            if ov < min_overlap * vis_len:
                 continue
             if abs(off) > max_offset_px:
                 continue
