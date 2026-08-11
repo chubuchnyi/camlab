@@ -8,6 +8,9 @@ because that is the failure mode that produced a confident wrong answer once alr
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -27,8 +30,11 @@ def fan():
 
 def _score(fan, i):
     info, cam = fan
+    # The camera's OWN principal point. Leaving it to default to the image centre is right for
+    # camera_auto.json only by coincidence, and it is the bug that made the server score a
+    # different camera from the one the overlay drew.
     return frame_residual(info.frame_path(i), cam["focal_px"][i], cam["rotation"][i],
-                          cam["position"][i], frame=i)
+                          cam["position"][i], frame=i, cx=cam["cx"], cy=cam["cy"])
 
 
 def test_a_frame_the_overlay_fits_scores_low(fan):
@@ -190,6 +196,42 @@ def test_match_px_counts_the_far_samples_it_does_not_discard_them(fan):
     assert r.worst_line_px > 40.0, (
         f"frame 30's worst marking is {r.worst_line_px:.0f} px out, which the old bounded version "
         "could not have said: 40 px was the most it could ever report"
+    )
+
+
+def test_a_human_beat_the_solver_by_nine_times_on_frame_28(fan):
+    """The measurement that says the ceiling is the SEARCH, not the model or the metric.
+
+    Frame 28 was aligned by hand in the viewer, by eye. That camera scores 3.6 px where the solve
+    scores 32.2 — with the same number of markings and 96 % of the samples, so it is not the
+    coverage collapse `compare()` refuses. It was reached with the current 7 parameters, no
+    distortion term, and the principal point at the image centre, which this cropped clip does not
+    have: everything that had been offered as a missing piece of the model was absent.
+
+    Pinned because it is the only camera in this repo known to be close to right, and because a
+    regression in the metric would show up here as the gap closing. If these numbers move, either
+    `frame_residual` changed or someone re-solved the clip — do not nudge them until they pass.
+    See `findings/the-search-fails-not-the-model.md`.
+    """
+    info, cam = fan
+    hand = json.loads(
+        (Path(__file__).parent.parent / "calib" / "fan-hand-aligned-2026-08-11.json").read_text()
+    )["camera_auto.json"]["28"]
+
+    solved = frame_residual(info.frame_path(28), cam["focal_px"][28], cam["rotation"][28],
+                            cam["position"][28], frame=28, cx=cam["cx"], cy=cam["cy"])
+    by_hand = frame_residual(info.frame_path(28), hand["focal_px"], hand["rotation"],
+                             hand["position"], frame=28, cx=cam["cx"], cy=cam["cy"])
+
+    assert by_hand.worst_line_px < 5.0, f"hand fit was 3.6 px, got {by_hand.worst_line_px:.1f}"
+    assert solved.worst_line_px > 25.0, f"solve was 32.2 px, got {solved.worst_line_px:.1f}"
+    assert by_hand.n > 0.9 * solved.n, (
+        f"the hand fit must not win by pushing markings out of frame: {by_hand.n} vs {solved.n}"
+    )
+    n_hand = sum(1 for v in by_hand.per_line.values() if v[1] >= 8)
+    n_solved = sum(1 for v in solved.per_line.values() if v[1] >= 8)
+    assert n_hand >= n_solved, (
+        f"and it must score at least as many markings: {n_hand} vs {n_solved}"
     )
 
 

@@ -48,6 +48,14 @@ Ordered by how much they cost.
 - **`Residual` was built with five of its nine fields on two error paths**, so `frame_residual`
   raised `TypeError` whenever the focal was non-positive or the frame had no paint. Only bad
   cameras reach those lines, so the metric crashed precisely on the cameras worth measuring.
+- **Hand edits live on the GPU box, not in the repo.** `runs/` is a docker volume
+  (`/vol/camlab_runs`), and `scripts/deploy.sh` ships `git archive HEAD` — so a human's manual
+  alignment is invisible locally and a redeploy does not carry it back. Pull it before assuming
+  `camera_manual.json` is empty. (`the-search-fails-not-the-model.md`)
+- **A good camera seed is worth about three frames.** Chaining a refit from a hand-aligned frame
+  gives 5.5, 8.8, 14.7 px on the next three and is back to ~50 px by the fifth. Judging a seeding
+  strategy on its median over twenty frames hides that entirely — it reads 50.4 → 49.1, "no
+  effect", when the first three frames are ten times better.
 
 ## Geometry and conventions
 
