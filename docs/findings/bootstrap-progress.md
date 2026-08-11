@@ -60,7 +60,20 @@ distinguishes them on a single frame.
    and it is the strongest filter available that has not been used.
 2. **Demand coverage comparable to the best candidate**, not merely above a floor. The truth scored
    307 samples on fan; nothing that scores 137 should have been ranked first.
-3. **Break the pitch's symmetry.** A football pitch is 180°-rotation symmetric in its markings, so
-   two camera positions fit identically and nothing in the markings can choose. That needs
-   something outside them — the stands, the goals' surroundings, or a human. Worth confirming this
-   is what the 113 m is before building for it.
+3. **The pitch's 180° symmetry is real, measured, and not fixable by ranking.** Rotating a solved
+   camera by 180° about the centre spot — position `(x, y, z) → (−x, −y, z)`, yaw `+180°` — gives
+   *bit-for-bit identical* numbers:
+
+   | | as solved | rotated 180° |
+   |---|---|---|
+   | fan frame 8 | 2.1 px, 307 samples | **2.1 px, 307 samples** |
+   | broadcast frame 30 | 4.5 px, 300 samples | **4.5 px, 300 samples** |
+
+   The markings cannot say which half of the pitch is being looked at, because a football pitch is
+   symmetric under that rotation. Two answers, exactly equally good, and no amount of better
+   scoring will separate them — the information is not in the markings. Breaking it needs something
+   outside them: the stands, the scoreboard, which way the teams attack, or one click from a human.
+
+   Note this is **not** what the 113 m above is. The bootstrap's answer is not the mirror of the
+   truth either, so there are two separate problems: this ambiguity, which is fundamental, and the
+   chooser, which is merely wrong.
