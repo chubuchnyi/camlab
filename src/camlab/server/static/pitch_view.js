@@ -95,10 +95,35 @@ export function createPitchView(cfg) {
     // spins around it, which is unusable and looks like a bug in the gizmo.
     orbit.enabled = !e.value;
     dragging = e.value;
-    if (!e.value && cfg.onDragEnd) {
-      cfg.onDragEnd([dragProxy.position.x, dragProxy.position.y, dragProxy.position.z]);
-    }
+    if (!e.value && cfg.onDragEnd) cfg.onDragEnd(proxyState());
   });
+
+  /** The proxy as the SEVEN numbers the server speaks, never as a matrix.
+   *
+   * Angles derived exactly as the server does, which for roll is not the obvious thing: `right.z`
+   * gives the roll only when the camera is already level — the one case that tests nothing — so it
+   * is read in the LEVEL BASIS built from the forward direction. Getting that wrong shows up as a
+   * roll that is right at the horizon and drifts as the camera tilts, which reads like a solver
+   * problem rather than a conversion one.
+   */
+  function proxyState() {
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(dragProxy.quaternion).normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(dragProxy.quaternion).normalize();
+    const yaw = (Math.atan2(fwd.y, fwd.x) * 180) / Math.PI;
+    const elev = (Math.asin(Math.max(-1, Math.min(1, fwd.z))) * 180) / Math.PI;
+    const down = new THREE.Vector3(0, 0, -1);
+    let roll = 0;
+    const r0 = new THREE.Vector3().crossVectors(down, fwd);
+    if (r0.lengthSq() > 1e-12) {
+      r0.normalize();
+      const d0 = new THREE.Vector3().crossVectors(fwd, r0).normalize();
+      roll = (Math.atan2(right.dot(d0), right.dot(r0)) * 180) / Math.PI;
+    }
+    return {
+      position: [dragProxy.position.x, dragProxy.position.y, dragProxy.position.z],
+      yaw, elev, roll,
+    };
+  }
   orbit.target.set(0, 0, 0);
   orbit.maxPolarAngle = Math.PI * 0.495;   // never orbit under the pitch: from below the markings
   orbit.screenSpacePanning = false;        // mirror and read as a plausible different camera
@@ -521,7 +546,12 @@ export function createPitchView(cfg) {
     drawCamera(i);
     drawFramePlane(i);
     // Follow the camera unless a hand is on the gizmo, in which case the hand wins until it lets go.
-    if (!dragging) dragProxy.position.copy(solved.position);
+    // The proxy carries the camera's own frame, position and orientation both, so the rotate
+    // gizmo turns about the axes a human sees rather than about the world's.
+    if (!dragging) {
+      dragProxy.position.copy(solved.position);
+      dragProxy.quaternion.copy(solved.quaternion);
+    }
     const live = cam.focal_px[i] > 0;
     // The camera has SEVEN independent degrees of freedom — position (3), orientation (3), focal
     // (1) — and the panel used to show five numbers, of which one was derived. The three angles
@@ -573,10 +603,14 @@ export function createPitchView(cfg) {
 
   /** Turn the drag gizmo on or off. Off by default: a gizmo sitting in the view is a thing to
       catch with the mouse while orbiting, and most of the time the camera is not being moved. */
-  function setDragMode(on) {
+  function setDragMode(on, mode) {
     gizmo.enabled = !!on;
     gizmoHelper.visible = !!on;
-    if (on) dragProxy.position.copy(solved.position);
+    if (mode) gizmo.setMode(mode);
+    if (on) {
+      dragProxy.position.copy(solved.position);
+      dragProxy.quaternion.copy(solved.quaternion);
+    }
   }
 
   return {

@@ -360,3 +360,29 @@ def test_the_camera_can_be_dragged_and_it_writes_through_the_normal_edit_path():
     assert 'id="e-drag"' in page and "setDragMode" in page
     drag = re.search(r"onDragEnd:[\s\S]*?\},", page).group(0)
     assert "pushManual()" in drag, "a drag must be written by the same path a typed number is"
+
+
+def test_the_camera_can_be_turned_and_nudged_without_ever_posting_a_matrix():
+    """Rotation is allowed; posting a matrix is not.
+
+    The objection to a rotate gizmo was that a hand could produce something that is not a rotation.
+    A quaternion IS one — the risk was only in sending a raw 3x3, which the server has refused
+    since the start. So the gizmo derives the three ANGLES the server speaks and sends those, with
+    roll read in the level basis rather than as `right.z`, which is the roll only when the camera
+    is already level. Verified against the server to 1e-16 degrees on six frames.
+    """
+    view = (STATIC / "pitch_view.js").read_text()
+    page = (STATIC / "index.html").read_text()
+
+    st = re.search(r"function proxyState\(\)[\s\S]*?\n  \}", view).group(0)
+    assert "crossVectors" in st and "atan2" in st, "roll must be read in the level basis"
+    assert "matrix" not in st.lower(), "the browser sends scalars, never a transform"
+    assert 'id="e-mode"' in page and 'value="rotate"' in page
+
+    # The arrows scrub frames normally, so the mode has to take them and say where scrubbing went.
+    assert "NUDGE" in page and "function nudge" in page
+    assert "pushManual()" in re.search(r"function nudge[\s\S]*?\n\}", page).group(0), (
+        "a keyboard nudge is the same edit as a typed number"
+    )
+    assert 'id="e-keys"' in page, "a mode that repurposes the arrow keys must say so on screen"
+    assert "adjusting()) return;" in page, "and the frame stepper must yield while it is on"

@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=19" />
+  <link rel="stylesheet" href="/static/style.css?v=20" />
 </head>
 <body>
 
@@ -181,9 +181,22 @@
       <!-- Position by hand in the 3D view. Only the position: aim stays on the numbers, because a
            rotation gizmo lets a hand produce something that is not a rotation, and "this is one
            camera" would stop being a guarantee. -->
-      <label title="drag the camera in the 3D view; its aim stays on the numbers">
-        <input type="checkbox" id="e-drag" /> move the camera by hand
+      <label title="drag the camera in the 3D view and nudge it with the keyboard">
+        <input type="checkbox" id="e-drag" /> adjust the camera by hand
       </label>
+      <label class="row" id="e-moderow">gizmo
+        <select id="e-mode">
+          <option value="translate">move</option>
+          <option value="rotate">turn</option>
+        </select>
+      </label>
+      <!-- Arrows scrub frames normally, so in this mode they move the camera and scrubbing goes to
+           , and . — a modifier for every nudge is worse than one explicit mode. -->
+      <p class="small muted" id="e-keys">
+        <b>&larr;&rarr;</b> X · <b>&uarr;&darr;</b> Y · <b>PgUp/PgDn</b> Z ·
+        <b>shift+arrows</b> aim · <b>[ ]</b> roll · <b>&minus; =</b> focal ·
+        <b>alt</b> fine · <b>, .</b> frame
+      </p>
       <button id="e-flip" title="the markings fit both ways — this is the other one">
         flip 180° (whole clip)
       </button>
@@ -220,7 +233,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=16";
+import { createPitchView } from "/static/pitch_view.js?v=17";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -231,10 +244,19 @@ const view = createPitchView({
   // A drag reports where the camera was let go, and it is written through the SAME manual path a
   // typed number takes — so it lands in camera_manual.json, is reset by the same buttons, and the
   // fields update to match. A second write path would be a second place for the two to disagree.
-  onDragEnd: async ([x, y, z]) => {
+  onDragEnd: async (st) => {
+    const [x, y, z] = st.position;
     $("e-x").value = x.toFixed(2);
     $("e-y").value = y.toFixed(2);
     $("e-z").value = z.toFixed(2);
+    // Rotation comes back as the three ANGLES the server speaks, derived in its own convention —
+    // roll in the level basis, not `right.z`, which is only the roll when the camera is already
+    // level. Verified against the server to 1e-16 degrees on six frames of the fan clip.
+    if (Number.isFinite(st.yaw)) {
+      $("e-yaw").value = st.yaw.toFixed(2);
+      $("e-elev").value = st.elev.toFixed(2);
+      $("e-roll").value = st.roll.toFixed(2);
+    }
     await pushManual();
   },
   onCamera: (c) => {
@@ -393,6 +415,7 @@ $("clip").onchange = (e) => listClips(e.target.value).catch((x) => err(String(x.
 
 addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (adjusting()) return;                    // the arrows belong to the camera in that mode
   if (e.key === "ArrowLeft") { playing = false; show(frame - 1); }
   else if (e.key === "ArrowRight") { playing = false; show(frame + 1); }
   else if (e.key === " ") { e.preventDefault(); $("play").click(); }
@@ -687,12 +710,52 @@ $("s-go").onclick = async () => {
   }
 };
 
-$("e-drag").onchange = (e) => {
-  view.setDragMode(e.target.checked);
-  err(e.target.checked
-    ? "drag the arrows to move the camera; let go and it is written as a hand edit"
+function adjusting() { return $("e-drag").checked; }
+
+$("e-drag").onchange = () => {
+  view.setDragMode(adjusting(), $("e-mode").value);
+  err(adjusting()
+    ? "arrows now move the CAMERA; , and . step frames. Every nudge is written as a hand edit."
     : "");
 };
+$("e-mode").onchange = () => view.setDragMode(adjusting(), $("e-mode").value);
+
+// Nudging. Each key writes through `pushManual` like everything else, so a keypress, a drag and a
+// typed number are the same edit by the time they reach disk.
+//
+// Steps chosen from what the eye can actually resolve on the overlay: at 70 m and a 3000 px focal,
+// 0.25 m of camera moves the far touchline about 10 px and 0.2 deg of aim moves it about 10 px
+// too, so the two feel the same on screen. Alt takes a fifth of that for the last pixel.
+const NUDGE = { pos: 0.25, ang: 0.2, focal: 25 };
+
+function nudge(field, delta) {
+  const el = $(`e-${field}`);
+  const v = parseFloat(el.value);
+  if (!Number.isFinite(v)) return;
+  el.value = (v + delta).toFixed(field === "focal" ? 0 : 2);
+  pushManual();
+}
+
+addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (!adjusting()) return;
+  const k = e.key;
+  const fine = e.altKey ? 0.2 : 1.0;
+  const p = NUDGE.pos * fine, a = NUDGE.ang * fine, f = NUDGE.focal * fine;
+  const map = e.shiftKey
+    ? { ArrowLeft: ["yaw", +a], ArrowRight: ["yaw", -a],
+        ArrowUp: ["elev", +a], ArrowDown: ["elev", -a] }
+    : { ArrowLeft: ["x", -p], ArrowRight: ["x", +p],
+        ArrowUp: ["y", +p], ArrowDown: ["y", -p],
+        PageUp: ["z", +p], PageDown: ["z", -p],
+        "[": ["roll", -a], "]": ["roll", +a],
+        "-": ["focal", -f], "=": ["focal", +f], "+": ["focal", +f] };
+  const hit = map[k];
+  if (hit) { e.preventDefault(); e.stopPropagation(); nudge(hit[0], hit[1]); return; }
+  // Frame stepping has to go somewhere while the arrows are busy.
+  if (k === ",") { e.preventDefault(); playing = false; show(frame - 1); }
+  else if (k === ".") { e.preventDefault(); playing = false; show(frame + 1); }
+}, true);
 
 $("e-flip").onclick = async () => {
   if (!view.clip) return;

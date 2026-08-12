@@ -171,3 +171,11 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 #slvtools button { width: 100%; }
 #slvtools button:disabled { opacity: .55; cursor: progress; }
 #s-note { margin-top: 6px; word-break: break-word; }
+
+/* The nudge legend. Small and always visible: a mode that silently repurposes the arrow keys has
+   to say so where the mode is switched, not in a tooltip. */
+#e-keys { font-size: 10px; line-height: 1.5; margin: 4px 0 0; }
+#e-keys b { color: #d7dae0; font-weight: 600; }
+#e-moderow { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: center; }
+#e-moderow select { background: #262a31; color: #d7dae0; border: 1px solid #363b44;
+                    border-radius: 4px; padding: 2px 4px; font: inherit; }
