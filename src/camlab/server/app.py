@@ -185,6 +185,10 @@ async def upload(video: UploadFile = _F_VIDEO, clip_id: str = _F_CLIP,
     except Exception as exc:                      # noqa: BLE001 - report, do not leave a half-run
         dest.unlink(missing_ok=True)
         raise HTTPException(400, f"could not decode {name}: {exc}") from exc
+    # A default camera, immediately. Without one the clip lands in the list unopenable and the
+    # edit fields have nothing to show, so "upload a video" stopped one step short of being useful.
+    # It is a labelled guess and nothing here pretends otherwise.
+    write_start_camera(info)
     return {"clip_id": info.clip_id, "width": info.width, "height": info.height,
             "fps": info.fps, "n_frames": info.n_frames, "bytes": size}
 
@@ -380,6 +384,83 @@ def manual_get(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
     return {"frame": n, "which": which, "focal_px": cam["focal_px"][n],
             "x": x, "y": y, "z": z, "yaw": yaw, "elev": elev, "roll": roll,
             "edited": n in cam.get("manual_frames", [])}
+
+
+def write_start_camera(info) -> Path:
+    """A labelled default camera, so a freshly ingested clip is openable and editable.
+
+    Stands on the near touchline, looking at the centre spot, focal from a 22° horizontal field of
+    view — which is roughly what match footage is shot on. Nothing in it is measured from the clip
+    and the file says `is_default: true`.
+    """
+    from camlab.camera_file import write_camera
+
+    cx, cy = info.principal_point
+    pos = np.array([0.0, -75.0, 20.0])
+    f = np.asarray([0.0, 0.0, 0.0]) - pos
+    f = f / np.linalg.norm(f)
+    rvec = rodrigues_from_matrix(rotation_from_angles(
+        float(np.degrees(np.arctan2(f[1], f[0]))), float(np.degrees(np.arcsin(f[2]))), 0.0))
+    focal = (info.width / 2.0) / np.tan(np.radians(22.0) / 2.0)
+    n = info.n_frames
+    return write_camera(
+        info.dir / "camera_start.json", model="hand_start_default", clip_id=info.clip_id,
+        width=info.width, height=info.height, frames=np.arange(n),
+        focal_px=np.full(n, focal), position=np.tile(pos, (n, 1)),
+        rotation=np.tile(rvec, (n, 1)), cx=cx, cy=cy, degenerate=[False] * n,
+        is_default=True, assumed_fov_deg=22.0,
+        notes=("A DEFAULT, not a solve. Drag it onto the paint on one frame, then run the solve — "
+               "the chain follows the operator from there."),
+    )
+
+
+#: One solve at a time per clip, and its progress. In memory: a solve that a restart interrupts has
+#: not half-written anything, since each stage writes its own camera file only on success.
+_SOLVES: dict[str, dict] = {}
+
+
+@app.post("/api/run/{clip_id}/solve")
+def solve(clip_id: str, anchor: int = 0, seed: str = "camera_start.json") -> dict:
+    """Run the whole chain in the background: carry, self-heal, shared centre, smooth.
+
+    Not synchronous. Sixty frames takes a few minutes and an HTTP request that long is a request
+    that dies to some proxy or laptop lid. Poll `GET .../solve` for progress.
+
+    `anchor` should be a frame the human has aligned by eye, if there is one: measured at about
+    sixty frames' worth of anchor, and the difference between 2.11 px and 7.75 px on the fan clip.
+    """
+    import threading
+
+    from camlab.solve.pipeline import run as run_pipeline
+
+    ClipInfo.load(clip_id)                                   # 404s if the clip is unknown
+    cur = _SOLVES.get(clip_id)
+    if cur and cur.get("state") == "running":
+        raise HTTPException(409, f"{clip_id} is already solving: {cur.get('stage')}")
+
+    st: dict = {"state": "running", "stage": "starting", "step": 0, "of": 4,
+                "anchor": anchor, "seed": seed, "stages": {}}
+    _SOLVES[clip_id] = st
+
+    def progress(i, n, label, what):
+        st.update(step=i, of=n, stage=f"{label} — {what}")
+
+    def work():
+        try:
+            res = run_pipeline(clip_id, anchor=anchor, seed=seed, on_progress=progress)
+            st.update(state="done" if res["ok"] else "failed", stages=res["stages"],
+                      camera=res.get("camera"))
+        except Exception as exc:                              # noqa: BLE001 - surface, never hide
+            st.update(state="failed", stage=f"crashed: {exc}")
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"started": True, "clip_id": clip_id, "anchor": anchor, "seed": seed}
+
+
+@app.get("/api/run/{clip_id}/solve")
+def solve_status(clip_id: str) -> dict:
+    """How the background solve is going, or that none has run."""
+    return _SOLVES.get(clip_id) or {"state": "idle"}
 
 
 @app.post("/api/run/{clip_id}/flip")

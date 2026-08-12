@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=15" />
+  <link rel="stylesheet" href="/static/style.css?v=16" />
 </head>
 <body>
 
@@ -87,6 +87,17 @@
     </div>
     <h2>Camera</h2>
     <select id="camsel"></select>
+    <!-- The whole chain, from the browser. It exists because "upload a clip" stopped one step
+         short of useful: the frames decoded and there was no way to get a camera without a shell.
+         Anchor on a frame you have aligned by eye if you have one — measured at about sixty
+         frames' worth, and the difference between 2.11 px and 7.75 px on the fan clip. -->
+    <div id="slvtools">
+      <label class="row">anchor frame
+        <input class="ed" id="s-anchor" type="number" min="0" step="1" value="0" />
+      </label>
+      <button id="s-go">solve this clip</button>
+      <div class="small muted" id="s-note">carry &rarr; self-heal &rarr; shared centre &rarr; smooth</div>
+    </div>
 
     <h2>Layers</h2>
     <label><input type="checkbox" id="L-turf"       checked /> turf</label>
@@ -602,6 +613,51 @@ $("e-copy").onclick = async () => {
 // The half-turn. Not an alternative solve — a twin: the markings fit both ways EXACTLY, so this
 // is the one question about the camera that measurement cannot answer and a person can, by
 // looking at which end the goal is.
+// Poll while the chain runs. It is minutes, not seconds, so the request that starts it returns
+// immediately and this watches — an HTTP request held open for four minutes is a request that
+// dies to a proxy or a laptop lid.
+let solvePoll = null;
+async function pollSolve(id) {
+  try {
+    const d = await (await fetch(`/api/run/${id}/solve`)).json();
+    if (d.state === "running") {
+      $("s-note").textContent = `${d.step}/${d.of} · ${d.stage}`;
+      return;
+    }
+    clearInterval(solvePoll); solvePoll = null;
+    $("s-go").disabled = false;
+    const lines = Object.entries(d.stages || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
+    $("s-note").textContent = lines || d.stage || d.state;
+    if (d.state === "done") {
+      err("");
+      await listClips(id);
+      $("camsel").value = d.camera || $("camsel").value;
+      await reloadCamera();
+    } else {
+      err(`solve ${d.state}: ${d.stage || ""}`);
+    }
+  } catch (e) { /* the poll is best-effort; the next tick retries */ }
+}
+
+$("s-go").onclick = async () => {
+  if (!view.clip) return;
+  const id = view.clip.clip_id;
+  $("s-go").disabled = true;
+  $("s-note").textContent = "starting…";
+  try {
+    const r = await fetch(`/api/run/${id}/solve?anchor=${+$("s-anchor").value}` +
+                          `&seed=${camWhich()}`, { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.status);
+    if (solvePoll) clearInterval(solvePoll);
+    solvePoll = setInterval(() => pollSolve(id), 2000);
+  } catch (e) {
+    err("could not start the solve: " + (e.message || e));
+    $("s-go").disabled = false;
+    $("s-note").textContent = "";
+  }
+};
+
 $("e-flip").onclick = async () => {
   if (!view.clip) return;
   const b = $("e-flip");

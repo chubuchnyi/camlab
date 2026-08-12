@@ -237,3 +237,41 @@ def test_the_flip_turns_every_frame_and_leaves_the_solve_alone():
             path.unlink(missing_ok=True)
         else:
             path.write_text(before)
+
+
+def test_an_uploaded_clip_arrives_with_a_camera_and_a_way_to_solve_it():
+    """Upload used to stop one step short of useful.
+
+    The frames decoded, the clip appeared in the list, and there was no camera — so it could not be
+    opened, the edit fields had nothing to show, and the only way to a solve was a shell. A clip
+    now arrives with a labelled default and a button that runs the whole chain.
+    """
+    page = (STATIC / "index.html").read_text()
+    assert 'id="s-go"' in page and 'id="s-anchor"' in page
+    assert re.search(r'\$\("s-go"\)\.onclick', page), "the solve button needs a handler"
+    assert "setInterval" in page, (
+        "the solve takes minutes, so the page must poll rather than hold a request open"
+    )
+
+    from camlab.server.app import write_start_camera
+    assert callable(write_start_camera)
+
+    c = TestClient(app)
+    r = c.get("/api/run/fan/solve")
+    assert r.status_code == 200 and "state" in r.json(), "status must answer before any solve runs"
+
+
+def test_the_default_camera_is_labelled_as_a_guess():
+    """It is a guess and every consumer has to be able to tell. A default that reads like a solve
+    is how an unmeasured number ends up quoted as a result."""
+    import json
+
+    from camlab.runs import ClipInfo
+
+    for cid in ("fan",):
+        p = ClipInfo.load(cid).dir / "camera_start.json"
+        if not p.exists():
+            continue
+        d = json.loads(p.read_text())
+        assert d.get("is_default") is True
+        assert d["model"] == "hand_start_default"

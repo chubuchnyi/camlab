@@ -139,3 +139,12 @@ html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
 #uptools input[type=text] { flex: 1; min-width: 0; }
 #uptools button { width: 100%; margin-top: 6px; }
 #uptools button:disabled { opacity: .55; cursor: progress; }
+
+/* The solve button. Grouped with the camera selector because that is what it produces, and given
+   its own box so a control that takes minutes does not sit among ones that take milliseconds. */
+#slvtools { margin: 6px 0 10px; padding: 8px; border: 1px solid #2b2f36; border-radius: 6px; }
+#slvtools .row { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; }
+#slvtools input[type=number] { width: 5em; }
+#slvtools button { width: 100%; }
+#slvtools button:disabled { opacity: .55; cursor: progress; }
+#s-note { margin-top: 6px; word-break: break-word; }
