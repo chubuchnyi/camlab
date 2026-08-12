@@ -214,7 +214,12 @@ def main() -> None:
                "directly measured image-to-image homography. `healed_gap` is how far each frame "
                "had to reach for a good one — 0 means it was never in trouble."),
     )
+    from camlab.measure.verdict import judge
+
+    v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": focal.tolist(),
+                          "rotation": rot.tolist(), "position": pos.tolist()})
     print(f"\n== wrote {out} in {time.time() - t0:.0f}s")
+    print(f"   {v.line()}")
     print(f"   worst line, median  {np.nanmedian(w0):6.2f} px  ->  {np.nanmedian(w):6.2f} px")
     print(f"   frames under {args.bad_px:.0f} px  {int(np.nansum(w0 < args.bad_px)):6d}     ->  "
           f"{int(np.nansum(w < args.bad_px)):6d}   of {n}")

@@ -143,7 +143,12 @@ def main() -> None:
                "which is what separates a solver's wobble from an operator's pan; a mean does not, "
                "and flattening a real 100-degree turn is a measured way to lose."),
     )
+    from camlab.measure.verdict import judge
+
+    v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": out_f.tolist(),
+                          "rotation": out_r.tolist(), "position": pos.tolist()})
     print(f"\n== wrote {args.out} in {time.time() - t0:.0f}s")
+    print(f"   {v.line()}")
     print(f"   smoothed frames accepted  {taken} of {n}")
     print(f"   worst line, median  {np.nanmedian(w0):6.2f} px  ->  {np.nanmedian(w):6.2f} px")
     print(f"   worst spot, median  {np.nanmedian(sp0):6.2f} px  ->  {np.nanmedian(sp):6.2f} px")

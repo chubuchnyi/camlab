@@ -9,32 +9,25 @@ Last measured 2026-08-12. Read this and `findings/landmines.md`; that is the col
 A clip goes in, a camera comes out, and the camera is right by the only test that counts — the
 projected pitch lands on the painted one.
 
-| clip | worst line | worst **spot** | frames under 20 px | camera movement |
-|---|---|---|---|---|
-| `fan` (1080×608, phone, from the stands, floodlit night) | **1.70 px** | **14.8 px** | 120/120 | 0.00 m |
-| `broadcast` (1920×1080, professional) | **2.60 px** | **13.1 px** | 60/60 | 0.00 m |
+| clip | **across** | worst line | worst spot | markings | no paint across | under 20 px |
+|---|---|---|---|---|---|---|
+| `fan` (1080×608, phone, stands, floodlit night) | **1.88 px** | 1.69 px | 14.75 px | 6 | 11 % | 120/120 |
+| `broadcast` (1920×1080, professional) | **2.83 px** | 2.75 px | 12.72 px | 7 | 6 % | 60/60 |
+| `g15449383` (1920×1080) | 4.53 px | 2.92 px | 72.60 px | **2** | 23 % | not a verdict |
 
-Both, always. `worst line` alone was the headline for a week and it understates by 5–9×; the
-register says report two and the register was right about its own project.
+**Read the markings column first.** Every error here is a max over the markings a frame scores, so
+on a frame holding two of them it is a max over two. The third clip was called solved on the
+strength of "40 of 40 frames under 20 px" and it is not: it scores 2 markings and 76 samples where
+`fan` scores 6 and 165. `Residual.supported` and `bench_metric_ceiling.py` now say so rather than
+leaving it to be noticed.
 
-`fan` used one hand-aligned frame as its anchor. Without any human at all it reaches 7.75 px and
-100 of 120 — the difference is entirely the seed.
-
-**`broadcast` is the only external check this project has**, and the honest form of it is not the
-one this file carried for a week.
-
-camlab's shared centre and pitch3d's `rigid_119` — fitted from PnLCalib keypoints by a completely
-different route — **agree to 0.10 m across the two well-determined directions** and differ by
-2.06 m along the focal/distance degeneracy, 2.8° off the line of sight, with focals 1.1 % apart.
-"2.06 m apart" understates the agreement twentyfold where it means anything.
-
-The paint discriminates along that axis, which is what makes it usable: pitch3d 9.47 px worst line
-and 16.6 worst spot, camlab 4.17 and 12.1. Two metres along the degenerate direction costs 2.3× —
-independent evidence for "pinned to about a metre" below, measured between two solves sharing no
-code instead of by sliding one.
-
-`camera_known` is pitch3d's fit judged by camlab's metric: an independent camera, not an
-independent metric. Both cameras are backed up in `calib/cameras/`, because `runs/` is gitignored.
+**`across` is the camera. `worst spot` is the camera plus the detector**, and on `fan` it is 7.9×
+larger for that reason alone — measured 2026-08-12 and it changes what the remaining error is. A
+nearest-paint distance charges a hole in the detected centreline to the camera: over a gap the
+nearest pixel is far ALONG the same line, and a line cannot be displaced along itself. `fan`'s far
+goal line splits **11.75 px along against 2.20 across**, and along beats across on 63 % of all
+worst spots. The `no paint across` column is that defect on its own — 11 % of `fan`'s samples have
+no detected centreline opposite them at all, which is task #14's subsystem, not the solver's.
 
 ## The pipeline, and why each stage is there
 
@@ -57,10 +50,16 @@ All five behind one button in the viewer, and one call in `solve/pipeline.py`.
 
 ## What the numbers mean
 
-**`worst line`** is the worst marking's own median distance to the paint. **`worst spot`** is the
-worst single sample on that marking — what a ruler finds, because a human measures a line where it
-is furthest out. Read both: a marking pivoted about the middle of its overlap reports an offset of
-zero and is far out at both ends.
+**`across`** is the worst marking's own median distance to the paint measured **along its normal**,
+and it is the only one of the three that is the camera alone. **`worst line`** is the same median
+taken to the nearest paint in any direction. **`worst spot`** is the worst single sample on that
+marking — what a ruler finds, because a human measures a line where it is furthest out — and it is
+a joint reading of the camera and the paint detector.
+
+Read all three. A marking pivoted about the middle of its overlap reports an offset of zero and is
+far out at both ends, which is why the median alone is not enough; and a large gap between `worst
+spot` and `across` says the paint is being lost, which is real but is a different subsystem's
+defect.
 
 The metric had a ceiling until 2026-08-11: `match_px = 40` deleted every sample with no paint
 within it, so nothing could exceed 40 px and the readout went blank on the worst frames. A human
@@ -135,6 +134,18 @@ rectified correctly. A check to run on a camera you already believe, never a way
   under its own K — but there is nothing to fix.
 - **Random-search bootstrap.** 4 000, 20 000 and 60 000 candidates return the *identical* wrong
   camera.
+
+## Getting the camera out
+
+`scripts/export_camera.py <clip>` writes `calib/<clip>.npz`, **schema 2**: `focal_px` and
+`position` per frame, every key present on every camera, `zoom_ratio` and `centre_spread_m` so
+"does this clip zoom" and "is this one camera" need no arithmetic. `world_to_image` is rebuilt from
+the focal and pose beside it rather than copied.
+
+pitch3d's schema 1 held `focal` as one scalar for a whole clip. Collapsing to it costs **65 % of
+the accuracy** on `fan` — 1.69 px becomes 4.88 and five frames of thirty leave the band — and
+nothing on clips that do not zoom. `read_npz` refuses schema 1 by name; there is no compatibility
+branch, because pitch3d is being changed rather than accommodated.
 
 ## Hardware, and the absence of models
 

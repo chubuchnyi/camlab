@@ -20,13 +20,18 @@ here therefore carries `n`, and :func:`compare` refuses a verdict when coverage 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from camlab.core.pitch import pitch_polylines
 from camlab.measure.paint import centreline_pixels, paint_masks
+
+#: Below this many scored markings, a frame's error is a max over too few things to be a verdict.
+#: Four is `refit.MIN_MATCHED`, the same floor the solver already refuses to fit under. Measured
+#: support on the clips here: broadcast 7, fan 6, and the clip that fooled this project 2.
+MIN_SUPPORTING_MARKINGS = 4
 
 #: Marking samples per metre of polyline. The model draws centrelines, so this only has to be dense
 #: enough that every visible marking contributes; 2/m puts ~1400 samples on a full pitch.
@@ -53,6 +58,22 @@ class Residual:
         per_line: `{marking index: (median px, samples, worst sample px)}`. The third entry is
             what a ruler on the overlay finds, because a human points at a line's worst END, not
             at its middle — median 13 px against worst sample 74 px on one measured frame.
+        worst_across_px: Max over markings of that marking's **median across-line** error — the
+            same shape as `worst_line_px`, but measured across the marking instead of to the
+            nearest paint in any direction. This is the calibration error; `max_px` and
+            `per_line[k][2]` are not. A line cannot be displaced along itself, so the along-line
+            part of a nearest-neighbour distance is not an error at all — it is the detected paint
+            running out. On `fan`'s far goal line the worst spot splits 11.75 px along against
+            2.20 across, and along beats across on 63 % of all worst spots.
+        per_line_across: `{marking index: (median across px, worst across px)}`. Two warnings on
+            the second entry. A marking with no paint opposite it is ABSENT from this dict while
+            still present in `per_line`, so the two do not share keys and code that zips them is
+            wrong. And the max is contaminated: the normal is walked out to `match_px`, so where
+            a marking's own paint is missing the walk reaches a NEIGHBOURING one and reports the
+            distance to that. The median is what to read; the max is an upper bound at best.
+        n_no_paint_across: Samples with paint somewhere near but **none across their own
+            marking**. This is the detector's gap count, and it is what `worst spot` was silently
+            charging to the camera.
         n: Samples scored. Read with any median, never without.
         n_projected: Samples that landed in the image at all.
         n_unmatched: Samples inside the image with **no paint within `match_px`**. Still counted,
@@ -70,6 +91,28 @@ class Residual:
     n: int
     n_projected: int
     n_unmatched: int
+    #: Defaulted so the two `_empty` paths and any older caller still construct. NaN reads as
+    #: "not measured", which is what an unscoreable frame should say.
+    worst_across_px: float = float("nan")
+    per_line_across: dict = field(default_factory=dict)
+    n_no_paint_across: int = 0
+
+    @property
+    def n_markings(self) -> int:
+        """Markings with enough samples to be scored at all.
+
+        The number to read before either error. `worst_line_px` is a max over markings, so on a
+        frame holding two of them it is a max over two and means almost nothing — the third clip
+        ingested here scores 3.24 px on 2 markings and 76 samples, against `fan`'s 6 and 165, and
+        was briefly called solved on the strength of it. Fewer than `MIN_SUPPORTING_MARKINGS` and
+        the error is not a verdict.
+        """
+        return sum(1 for v in self.per_line.values() if v[1] >= 8)
+
+    @property
+    def supported(self) -> bool:
+        """Whether this frame's error means anything. See `n_markings`."""
+        return self.n_markings >= MIN_SUPPORTING_MARKINGS
 
     @property
     def coverage(self) -> float:
@@ -209,21 +252,125 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     # LOWER bound on how wrong the marking is — the true error is to the paint it should have hit,
     # which is further — so it can understate but never flatter. `n_unmatched` is still reported,
     # because "this marking has no paint under it" and "it is 45 px off" are different claims.
-    d, _nn = tree.query(sub)
+    d, nn = tree.query(sub)
     n_unmatched = int((d > match_px).sum())
     own = owner[idx]
 
-    per_line = {}
+    # ACROSS the marking, not to the nearest paint in any direction. A line has no observable
+    # displacement along itself, so the along-line part of `d` is not a camera error — it is the
+    # detected paint running out (a player on the line, a worn stretch, a thin far line the
+    # centreline extractor drops). Measured on `fan`: the far goal line's worst spot is 12.41 px,
+    # of which 11.75 is along and 2.20 across, and along beats across on 63 % of all worst spots.
+    # Quoting `d` there reports the detector's gaps as the camera's error.
+    tangent = _sample_tangents(uv, owner)[idx]
+    length = np.hypot(tangent[:, 0], tangent[:, 1])
+    has_dir = length > 1e-9
+    normal = (np.stack([-tangent[:, 1], tangent[:, 0]], axis=1)
+              / np.where(has_dir, length, 1.0)[:, None])
+    # Searched ALONG THE NORMAL rather than decomposed from the nearest neighbour. Decomposing
+    # still charges a sample that has no paint opposite it at all: the nearest pixel is then far
+    # along the line and its across component is whatever that pixel's sideways offset happens to
+    # be. Walking the normal gives the third answer the decomposition cannot — **no paint here** —
+    # which is a defect in the detector, not in the camera, and has to be counted as its own thing.
+    across, on_normal = _across_on_normal(sub, normal, dist, match_px)
+    # A sample with no direction cannot be measured this way, so the whole of its distance is
+    # charged. `_build_samples` drops the one-point markings (the penalty and centre spots), so
+    # today this only fires where two consecutive samples project to the same pixel. Kept because
+    # the charge has to fall on the flattering side if that ever stops being true.
+    across = np.where(has_dir, across, d)
+    on_normal = on_normal & has_dir
+    n_no_paint_across = int((~on_normal).sum())
+
+    per_line, per_line_across = {}, {}
     for k in np.unique(own):
-        dk = d[own == k]
+        m = own == k
+        dk = d[m]
         per_line[int(k)] = (float(np.median(dk)), int(dk.size), float(dk.max()))
+        # Only the samples that HAVE paint opposite them. A marking whose paint is missing is
+        # unmeasured here and shows up in `n_no_paint_across` instead; averaging a made-up number
+        # in would be the same mistake as the old `match_px` ceiling, in the other direction.
+        ak = across[m & on_normal]
+        if ak.size:
+            per_line_across[int(k)] = (float(np.median(ak)), float(ak.max()))
     # A marking held up by three samples is not evidence about that marking; requiring a handful
     # stops the worst-line number being decided by a corner clipping the frame.
     solid = [v[0] for v in per_line.values() if v[1] >= 8]
     worst = float(max(solid)) if solid else float("nan")
+    solid_across = [per_line_across[k][0] for k, v in per_line.items()
+                    if v[1] >= 8 and k in per_line_across]
+    worst_across = float(max(solid_across)) if solid_across else float("nan")
 
     return Residual(frame, float(np.median(d)), float(np.percentile(d, 90)), float(d.max()),
-                    worst, per_line, int(d.size), int(inside.sum()), n_unmatched)
+                    worst, per_line, int(d.size), int(inside.sum()), n_unmatched,
+                    worst_across, per_line_across, n_no_paint_across)
+
+
+def _across_on_normal(sub: np.ndarray, normal: np.ndarray, dist: np.ndarray,
+                      limit: float, step: float = 0.5) -> tuple[np.ndarray, np.ndarray]:
+    """How far ACROSS its own marking each sample is from the paint, and whether any was there.
+
+    Walks out along +normal and -normal together and takes the first offset at which `dist` — the
+    distance transform to the painted centreline, so sub-pixel and already computed — says a
+    centreline is under the foot. Returns `(offset, found)`; `offset` is meaningless where `found`
+    is False and callers must drop those rather than charge them.
+
+    `dist` is sampled **bilinearly**, and that is not a refinement. The detected centreline is one
+    pixel wide, so a ray walked in rounded integer steps hops over it whenever the normal is near
+    diagonal: rounding to the nearest pixel and testing `dist < 0.75` found paint across only 70 %
+    of `fan`'s samples, against 97 % here. The missing 27 % would have been reported as gaps in the
+    detector — a defect in another subsystem, invented by this function's own arithmetic.
+    """
+    h, w = dist.shape
+    best = np.full(len(sub), np.inf)
+    found = np.zeros(len(sub), dtype=bool)
+
+    def sample(p: np.ndarray) -> np.ndarray:
+        x = np.clip(p[:, 0], 0.0, w - 1.001)
+        y = np.clip(p[:, 1], 0.0, h - 1.001)
+        x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+        fx, fy = x - x0, y - y0
+        top = dist[y0, x0] * (1 - fx) + dist[y0, x0 + 1] * fx
+        bot = dist[y0 + 1, x0] * (1 - fx) + dist[y0 + 1, x0 + 1] * fx
+        return top * (1 - fy) + bot * fy
+
+    for t in np.arange(0.0, limit + step, step):
+        open_ = np.flatnonzero(~found)
+        if not open_.size:
+            break
+        for sign in ((1.0,) if t == 0.0 else (1.0, -1.0)):
+            if not open_.size:
+                break
+            here = sample(sub[open_] + sign * t * normal[open_])
+            hit = here < 1.0
+            if hit.any():
+                where = open_[hit]
+                # Sub-pixel, and not a nicety: the hit test fires anywhere within a pixel of the
+                # centreline, so reporting `t` alone quantises every good sample to 0.00 px and
+                # this metric would read "exactly on the paint" for anything under 1 px. The ray
+                # is the model line's normal and the painted line is near-parallel to it, so
+                # `dist` falls about 1:1 along the walk and the crossing is `t` plus what is left.
+                best[where] = t + here[hit]
+                found[where] = True
+                open_ = open_[~hit]
+    return best, found
+
+
+def _sample_tangents(uv: np.ndarray, owner: np.ndarray) -> np.ndarray:
+    """Each projected sample's direction along its **own** marking, in image pixels.
+
+    A forward difference where the next sample shares the marking, a backward one at the far end,
+    and zero for a marking of one point. Taken in the image rather than on the pitch because the
+    decomposition it feeds is an image-space one, and perspective turns a straight world direction
+    into a different image direction at every sample.
+    """
+    nxt, prv = np.roll(uv, -1, axis=0), np.roll(uv, 1, axis=0)
+    use_next = np.append(owner[:-1] == owner[1:], False)
+    use_prev = np.insert(owner[1:] == owner[:-1], 0, False)
+    t = np.zeros_like(uv)
+    t[use_next] = (nxt - uv)[use_next]
+    only_prev = use_prev & ~use_next
+    t[only_prev] = (uv - prv)[only_prev]
+    return t
 
 
 def _empty(frame: int, n_projected: int, n_unmatched: int = 0) -> Residual:

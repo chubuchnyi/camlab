@@ -165,7 +165,12 @@ def main() -> None:
                "distance in frames from the anchor, and a large one is a reason to distrust that "
                "frame rather than a decoration."),
     )
+    from camlab.measure.verdict import judge
+
+    v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": focal.tolist(),
+                          "rotation": rot.tolist(), "position": pos.tolist()})
     print(f"\n== wrote {out} in {time.time() - t0:.0f}s")
+    print(f"   {v.line()}")
     print(f"   worst line, median  {np.nanmedian(b):7.1f} px  ->  {np.nanmedian(a):7.1f} px")
     print(f"   frames under 20 px  {int(np.nansum(b < 20)):7d}     ->  {int(np.nansum(a < 20)):7d}"
           f"   of {n}")

@@ -12,15 +12,25 @@ only the way in.
 
 ## Where it stands
 
-| clip | worst line | worst **spot** | frames under 20 px | camera movement between frames |
-|---|---|---|---|---|
-| `fan` — 1080×608, a phone from the stands, floodlit night | **1.70 px** | **14.8 px** | 120/120 | 0.00 m |
-| `broadcast` — 1920×1080, professional | **2.60 px** | **13.1 px** | 60/60 | 0.00 m |
+| clip | **across** | worst line | worst spot | markings/frame | under 20 px |
+|---|---|---|---|---|---|
+| `fan` — 1080×608, a phone from the stands, floodlit night | **1.88 px** | 1.69 px | 14.75 px | 6 | 120/120 |
+| `broadcast` — 1920×1080, professional | **2.83 px** | 2.75 px | 12.72 px | 7 | 60/60 |
 
-**Both numbers, because this project's own rule says so** and the headline used to carry only the
-first. `worst line` is the worst marking's own median; `worst spot` is the worst single sample on
-it, which is what a ruler finds. They differ by 5–9× and the second is the honest one to quote at
-someone holding a ruler.
+A third clip is ingested and **not** solved, which is worth stating because it briefly looked
+solved: `g15449383` scores 2.92 px on **two markings** a frame against `fan`'s six. Every error
+here is a max over the markings a frame holds, so on two of them it is a max over two.
+`Residual.supported` now refuses that as a verdict.
+
+**Three numbers, and they measure different things.** `across` is the distance from a marking to
+its paint along the marking's own normal — the camera, alone. `worst line` is the same median
+taken to the nearest paint in any direction. `worst spot` is the worst single sample on the worst
+marking, which is what a ruler on the overlay finds.
+
+`worst spot` is 7.9× `across` on `fan`, and almost all of that gap is the paint detector rather
+than the camera: where the detected centreline has a hole, the nearest paint is far ALONG the same
+line, and a line cannot be displaced along itself. The far goal line splits 11.75 px along against
+2.20 across. Quote `across` for the solver and the gap between them for the detector.
 
 On `broadcast`, camlab's camera and pitch3d's — fitted from PnLCalib keypoints by a completely
 different route — **agree to 0.10 m across the two well-determined directions** and differ by

@@ -4,6 +4,11 @@ A human put a ruler on the overlay and read distances larger than `worst line` o
 tried. That is not a disagreement about a hard case — it is structural, and this measures the size
 of it.
 
+It cuts both ways, and the second direction was found later. `worst SAMPLE` OVERstates: it is the
+distance to the nearest paint in any direction, so a hole in the detected centreline is charged to
+the camera at the distance to where the paint resumes. On `fan` that is a 7.8x overstatement, and
+the `ACROSS` column is the camera without it.
+
 `residual.worst_line_px` is `max over markings of (that marking's MEDIAN sample distance)`, where a
 sample only counts if paint was found within `match_px = 40`. Three separate cuts, all of which
 remove large errors and only large errors:
@@ -99,8 +104,8 @@ def main() -> None:
     print(f"{clip_id} / {which}   principal point ({cx:.0f}, {cy:.0f})\n")
     # Column 2 was the contrast that proved the ceiling; since the fix it is a CONTROL — it is
     # computed independently here, and it agreeing with column 1 is what says the fix landed.
-    print("        reported   |  independent, @400  |  worst SAMPLE      |  samples with no")
-    print("frame   worst line |  worst line         |  on that marking   |  paint within 40px")
+    print("        reported   |  independent, @400  |  worst SAMPLE      |  ACROSS the line  | mk")
+    print("frame   worst line |  worst line         |  on that marking   |  = the camera     |    ")
     print("-" * 78)
 
     rows = []
@@ -112,21 +117,34 @@ def main() -> None:
             continue
         w_med = max(v[0] for v in wide.values())
         w_max = max(v[1] for v in wide.values())
-        # `n_unmatched` is a SUBSET of `n` now that far samples are charged rather than dropped.
-        # Adding the two together was right under the old contract and double-counts under this one.
-        frac = r.n_unmatched / max(r.n, 1)
-        rows.append((r.worst_line_px, w_med, w_max, frac))
+        rows.append((r.worst_line_px, w_med, w_max, r.worst_across_px))
+        # The marking count, because the two errors are a max over it and a max over two markings
+        # is not a verdict. A frame under the floor is starred rather than quietly averaged in.
         print(f"{n:5d}   {r.worst_line_px:8.1f}   |{w_med:14.1f}      |{w_max:13.1f}      "
-              f"|{frac:12.0%}")
+              f"|{r.worst_across_px:12.1f}|{r.n_markings:3d}{'' if r.supported else '*'}")
 
     a = np.array(rows, float)
     print("-" * 78)
     print(f"median  {np.nanmedian(a[:, 0]):8.1f}   |{np.nanmedian(a[:, 1]):14.1f}      "
-          f"|{np.nanmedian(a[:, 2]):13.1f}      |{np.nanmedian(a[:, 3]):12.0%}")
+          f"|{np.nanmedian(a[:, 2]):13.1f}      |{np.nanmedian(a[:, 3]):12.1f}")
+    from camlab.measure.residual import MIN_SUPPORTING_MARKINGS
+    weak = sum(1 for n in frames
+               if not frame_residual(info.frame_path(n), cam["focal_px"][n], cam["rotation"][n],
+                                     cam["position"][n], frame=n, cx=cx, cy=cy).supported)
+    if weak:
+        print(f"\n!! {weak} of {len(frames)} frames scored fewer than {MIN_SUPPORTING_MARKINGS} "
+              "markings. On those the error is a max over too few things to be a verdict, and a "
+              "low number means the camera saw little, not that it was right.")
     print(f"\nunderstatement, reported vs uncapped worst line: "
           f"{np.nanmedian(a[:, 1]) / np.nanmedian(a[:, 0]):.1f}x")
     print(f"understatement, reported vs worst sample:         "
           f"{np.nanmedian(a[:, 2]) / np.nanmedian(a[:, 0]):.1f}x")
+    # And the other direction, which took longer to find. `worst SAMPLE` is the distance to the
+    # nearest paint in ANY direction, so where the detected centreline has a hole it is measured
+    # to where the paint resumes, far along the same line, with the camera exactly right. ACROSS
+    # the marking is the camera on its own.
+    print(f"OVERstatement, worst sample vs across the line:   "
+          f"{np.nanmedian(a[:, 2]) / max(np.nanmedian(a[:, 3]), 1e-9):.1f}x")
 
 
 if __name__ == "__main__":

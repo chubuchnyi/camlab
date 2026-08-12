@@ -173,7 +173,12 @@ def main() -> None:
                "— the focal/distance degeneracy — and keeping the point where the paint agrees "
                "best. Unlike its parent this trajectory is renderable: the camera does not move."),
     )
+    from camlab.measure.verdict import judge
+
+    v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": focal.tolist(),
+                          "rotation": rot.tolist(), "position": posn.tolist()})
     print(f"\n== wrote {out} in {time.time() - t0:.0f}s")
+    print(f"   {v.line()}")
     print(f"   worst line, median  {np.nanmedian(b):6.2f} px  ->  {np.nanmedian(a):6.2f} px")
     print(f"   frames under 20 px  {int(np.nansum(b < 20)):6d}     ->  {int(np.nansum(a < 20)):6d}"
           f"   of {n}")

@@ -13,6 +13,25 @@ Ordered by how much they cost.
 - **Never compare medians without comparing sample counts.** The first M-1 probe returned a
   confident, wrong verdict this way, and the focal had run away to 87 px unnoticed. Coverage and
   physicality guards exist because of it.
+- **A distance to the nearest paint charges the detector's holes to the camera.** A line cannot be
+  displaced along itself, so where the detected centreline has a gap the nearest pixel is found
+  further ALONG the same line and the distance is large with the camera exactly right. `fan`'s far
+  goal line: 11.75 px along against 2.20 across, and along wins on 63 % of worst spots. Read
+  `Residual.worst_across_px` for the solver; `worst spot` is the solver and the detector together
+  and is 7.9× larger for that reason alone.
+- **Walking a ray in rounded integer pixels hops over a 1-px skeleton.** The detected centreline is
+  one pixel wide, so a near-diagonal normal steps across it without ever landing on it: rounded
+  sampling found paint across 70 % of `fan`'s samples, bilinear 97 %. The missing 27 % were about
+  to be published as gaps in the paint detector — a defect in a subsystem that does not have it,
+  manufactured by the measurement. Sample a distance transform bilinearly, always.
+- **A hit test with a tolerance quantises everything under it to zero.** "First offset where
+  `dist < 1.0`" reports 0.00 px for every sample within a pixel, and the metric then reads *exactly
+  on the paint*. Add back what the tolerance swallowed (`t + dist_at_t`), and parametrise the test
+  at offsets that are not multiples of the walk step or nothing notices when it is removed.
+- **The pitch size is not the error, and 68 m wide is not measured.** Re-scoring `fan` at 100–110 m
+  puts 105 m ahead by 20×, so that is settled — but 68 m and 72 m score **bit-for-bit identically**,
+  because the touchlines never land inside the frame and on the surface. The width is assumed on
+  this clip, not measured, and no number would move if it were wrong.
 - **A conclusion measured on one clip is a conclusion about one clip.** Most of what was settled on
   2026-08-11 — the overlap fix, the straightness refutation, the cross-ratio, the principal point —
   was measured on `fan` alone. Re-checked on `broadcast` and a third clip, the straightness result
