@@ -44,6 +44,14 @@ Ordered by how much they cost.
   first stage read: a second press compounds on the first with no way back, and the manual layer —
   keyed by file name — ends up laid over a different solve than it was aimed against. Happened on
   `CRO_MOR_194948`. `pipeline.run` now snapshots such a seed to `camera_seed_used.json` first.
+- **The `degenerate` flag outlives the solve it describes.** Four stages wrote
+  `degenerate=src.get("degenerate", ...)`, copying their source's list straight through, so a frame
+  the FIRST solve could not fit stayed flagged however well the chain later repaired it. `fan`
+  115-118: focals of 300/20000/300/20000 in `camera_auto.json` — correctly flagged, pinned at both
+  search bounds — and 4729/4727/4726/4716 in `camera_smooth.json`, fixed four stages earlier and
+  still drawn in the viewer's "could not use this frame" pink. `buildStrip` had already been made
+  to distrust it; the camera body, the frustum and the trajectory had not. Both ends now derive it:
+  `camera_file.degenerate_from` at the write, `unusable()` in the viewer for files already on disk.
 - **A clip-scoped position write is shape-identical to a hand aim.** The viewer's "position applies
   to the whole clip" tick-box stamps an entry on EVERY frame — the shared position with that
   frame's own rotation and focal — and 117 of `fan`'s 120 manual entries are that, not aims.

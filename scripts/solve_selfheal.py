@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import cv2  # noqa: E402
 
-from camlab.camera_file import write_camera  # noqa: E402
+from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.paint import paint_masks  # noqa: E402
 from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
@@ -207,7 +207,9 @@ def main() -> None:
         info.dir / args.out, model=f"{src['model']}+selfheal", clip_id=info.clip_id,
         width=info.width, height=info.height, frames=np.asarray(src["frames"], int),
         focal_px=focal, position=pos, rotation=rot, cx=cx, cy=cy,
-        degenerate=src.get("degenerate", [False] * n),
+        # Derived from what is being written, not carried over from the source: a frame this
+        # stage just repaired must stop being flagged as one the solver could not use.
+        degenerate=degenerate_from(focal),
         healed_from=args.src, healed_gap=healed.tolist(),
         healed_by={str(k): v for k, v in chose.items()},
         notes=("Frames the solve lost, re-seeded from their nearest surviving neighbour through a "

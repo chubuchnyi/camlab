@@ -29,6 +29,26 @@ SCHEMA = 1
 FOCAL_BOUNDS = (300.0, 20000.0)
 
 
+def degenerate_from(focal_px) -> list[bool]:
+    """Which frames are degenerate, derived from the camera in hand rather than inherited.
+
+    Every stage used to pass its SOURCE's list through — `src.get("degenerate", ...)` — so a frame
+    the first solve could not fit stayed flagged for the rest of the chain's life however well it
+    was later repaired. On `fan`, frames 115-118 have focals of 300, 20000, 300, 20000 in
+    `camera_auto.json` (pinned at both search bounds, correctly flagged) and 4729, 4727, 4726, 4716
+    in `camera_smooth.json` — fixed, and still flagged, and still drawn in the viewer's "could not
+    use this frame" pink four stages later.
+
+    Degenerate here means what the camera file can still show: no focal at all, or a focal sitting
+    on a `FOCAL_BOUNDS` end, which is a search that ran out of room rather than a lens.
+    """
+    import numpy as np
+
+    f = np.asarray(focal_px, dtype=float)
+    lo, hi = FOCAL_BOUNDS
+    return (~(f > 0) | (f <= lo + 1e-6) | (f >= hi - 1e-6)).tolist()
+
+
 def _clip_principal_point(clip_id: str):
     """The clip's own optical axis, or None when the clip is not on disk (tests, fixtures).
 

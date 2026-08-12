@@ -34,7 +34,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from camlab.camera_file import write_camera  # noqa: E402
+from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.core.angles import (  # noqa: E402
     angles_from_rotation,
     matrix_from_rodrigues,
@@ -134,7 +134,9 @@ def main() -> None:
         info.dir / args.out, model=f"{src['model']}+median_smoothed", clip_id=info.clip_id,
         width=info.width, height=info.height, frames=np.asarray(src["frames"], int),
         focal_px=out_f, position=pos, rotation=out_r, cx=cx, cy=cy,
-        degenerate=src.get("degenerate", [False] * n),
+        # Derived from what is being written, not carried over from the source: a frame this
+        # stage just repaired must stop being flagged as one the solver could not use.
+        degenerate=degenerate_from(focal),
         smoothed_from=args.src,
         kernels={"focal": args.k_focal, "yaw": args.k_yaw, "elev": args.k_elev,
                  "roll": args.k_roll},

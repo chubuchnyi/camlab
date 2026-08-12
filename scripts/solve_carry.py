@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import cv2  # noqa: E402
 
-from camlab.camera_file import write_camera  # noqa: E402
+from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.paint import paint_masks  # noqa: E402
 from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
@@ -201,7 +201,8 @@ def main() -> None:
         info.dir / args.out, model=f"{seed['model']}+pixel_carry", clip_id=info.clip_id,
         width=info.width, height=info.height, frames=np.asarray(seed["frames"], int),
         focal_px=focal, position=pos, rotation=rot, cx=cx, cy=cy,
-        degenerate=seed.get("degenerate", [False] * n),
+        # Derived from what is being written, not carried over from the seed.
+        degenerate=degenerate_from(focal),
         carried_from=args.seed, anchor_frames=anchors,
         anchors_hand_aligned=by_hand,
         carry_drift=drift.tolist(),

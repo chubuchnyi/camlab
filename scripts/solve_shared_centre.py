@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import cv2  # noqa: E402
 
-from camlab.camera_file import write_camera  # noqa: E402
+from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.paint import paint_masks  # noqa: E402
 from camlab.measure.residual import frame_residual  # noqa: E402
@@ -165,7 +165,9 @@ def main() -> None:
         info.dir / args.out, model=f"{src['model']}+shared_centre", clip_id=info.clip_id,
         width=info.width, height=info.height, frames=np.asarray(src["frames"], int),
         focal_px=focal, position=posn, rotation=rot, cx=cx, cy=cy,
-        degenerate=src.get("degenerate", [False] * n),
+        # Derived from what is being written, not carried over from the source: a frame this
+        # stage just repaired must stop being flagged as one the solver could not use.
+        degenerate=degenerate_from(focal),
         shared_centre=centre.tolist(), fitted_from=args.src,
         line_direction=direction.tolist(), line_variance_share=share,
         notes=("ONE optical centre for the whole clip, per-frame focal and rotation. The centre "

@@ -26,6 +26,18 @@ const PAINT = 0xffffff;
 const UPRIGHT = 0x67e8f9;
 const CAM_OK = 0xffd24a;
 const CAM_BAD = 0xff3ea5;          // a frame the solver could not use: marked, never hidden (R-6)
+
+//: A frame is drawn as unusable when THIS camera file still shows it so — no focal, or a focal
+//: sitting on a search bound. Not from the `degenerate` list, which four stages used to copy
+//: through from their source: `fan` 115-118 carry focals of 300/20000 in `camera_auto.json` and
+//: 4729/4727/4726/4716 in `camera_smooth.json`, repaired four stages earlier and still painted in
+//: the "could not use this" pink. `buildStrip` had already stopped trusting it; the camera body,
+//: the frustum and the trajectory had not. Matches `camera_file.FOCAL_BOUNDS`.
+const FOCAL_BOUNDS = [300, 20000];
+const unusable = (cam, i) => {
+  const f = cam.focal_px[i];
+  return !(f > 0) || f <= FOCAL_BOUNDS[0] + 1e-6 || f >= FOCAL_BOUNDS[1] - 1e-6;
+};
 const CAM_DRAG = 0x63c7ff;         // the pose currently in a hand, so a preview cannot be mistaken
                                    // for the solve it has not replaced yet
 const TRAIL = 0xffa640;
@@ -295,7 +307,7 @@ export function createPitchView(cfg) {
 
     // A hand-held pose is drawn in its own colour. Without that the preview is indistinguishable
     // from the solve and there is no way to see, mid-drag, that anything is being changed.
-    const colour = pose ? CAM_DRAG : (cam.degenerate?.[i] ? CAM_BAD : CAM_OK);
+    const colour = pose ? CAM_DRAG : (unusable(cam, i) ? CAM_BAD : CAM_OK);
     const c = at.position.clone();
 
     const body = new THREE.Mesh(
@@ -334,7 +346,7 @@ export function createPitchView(cfg) {
       if (!(cam.focal_px[i] > 0)) continue;
       const m = new THREE.Mesh(
         new THREE.SphereGeometry(0.35, 6, 6),
-        new THREE.MeshBasicMaterial({ color: cam.degenerate?.[i] ? CAM_BAD : TRAIL }),
+        new THREE.MeshBasicMaterial({ color: unusable(cam, i) ? CAM_BAD : TRAIL }),
       );
       m.position.set(...cam.position[i]);
       groups.trajectory.add(m);
@@ -634,7 +646,9 @@ export function createPitchView(cfg) {
     const info = {
       frame: i,
       live,
-      degenerate: !!cam.degenerate?.[i],
+      // Derived, like the colour above. The file's own `degenerate` list is inherited from
+      // whatever seeded the chain and outlives the repairs made since — see `unusable`.
+      degenerate: unusable(cam, i),
       focal_px: f,
       // Derived from the focal and the image size, not free — shown because a human reads angles,
       // not pixels, and both axes matter on a 16:9 crop.
