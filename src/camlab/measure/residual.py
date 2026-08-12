@@ -33,6 +33,17 @@ from camlab.measure.paint import centreline_pixels, paint_masks
 #: support on the clips here: broadcast 7, fan 6, and the clip that fooled this project 2.
 MIN_SUPPORTING_MARKINGS = 4
 
+#: How close the walk along a marking's normal must come to the detected centreline before it
+#: counts as having crossed it. Not a fudge factor and not a tolerance the answer inherits — the
+#: reported offset is the position of the minimum, so this only decides crossed-or-not.
+#:
+#: It has to sit above 1.0, and the reason is a defect one layer down. `paint.distance_from_mask`
+#: extracts the centreline as the local maxima of a distance transform, and on a diagonal band that
+#: comes out DISCONNECTED — the skeleton pixels sit two apart, so a ray crossing between them gets
+#: no closer than 1.00 and a `< 1.0` test rejects a genuine crossing. That was measured as 11 % of
+#: `fan`'s samples "having no paint", which was this constant and not the detector.
+CROSSING_TOL = 1.5
+
 #: Marking samples per metre of polyline. The model draws centrelines, so this only has to be dense
 #: enough that every visible marking contributes; 2/m puts ~1400 samples on a full pitch.
 SAMPLES_PER_M = 2.0
@@ -306,23 +317,30 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
 
 
 def _across_on_normal(sub: np.ndarray, normal: np.ndarray, dist: np.ndarray,
-                      limit: float, step: float = 0.5) -> tuple[np.ndarray, np.ndarray]:
+                      limit: float, step: float = 0.25) -> tuple[np.ndarray, np.ndarray]:
     """How far ACROSS its own marking each sample is from the paint, and whether any was there.
 
-    Walks out along +normal and -normal together and takes the first offset at which `dist` — the
-    distance transform to the painted centreline, so sub-pixel and already computed — says a
-    centreline is under the foot. Returns `(offset, found)`; `offset` is meaningless where `found`
-    is False and callers must drop those rather than charge them.
+    Walks each direction separately and takes the **first minimum** of `dist` that comes within
+    `CROSSING_TOL` — the point where the ray crossed the painted centreline. The offset reported is
+    where that minimum sits, so it inherits nothing from the tolerance and is accurate to half a
+    step. Returns `(offset, found)`; `offset` is `inf` where `found` is False, and callers must
+    drop those rather than charge them.
 
-    `dist` is sampled **bilinearly**, and that is not a refinement. The detected centreline is one
-    pixel wide, so a ray walked in rounded integer steps hops over it whenever the normal is near
-    diagonal: rounding to the nearest pixel and testing `dist < 0.75` found paint across only 70 %
-    of `fan`'s samples, against 97 % here. The missing 27 % would have been reported as gaps in the
-    detector — a defect in another subsystem, invented by this function's own arithmetic.
+    Three things here were each, in turn, the whole measurement, and each was found by the number
+    coming out wrong rather than by reading the code.
+
+    *Bilinear, not rounded.* The detected centreline is one pixel wide, so a ray walked in rounded
+    integer steps hops over it whenever the normal is near diagonal: rounding and testing
+    `dist < 0.75` found paint across 70 % of `fan`'s samples against 97 % here.
+
+    *First minimum, not first value under a threshold.* Reporting the offset at which `dist` first
+    dropped below a tolerance quantises every good sample to 0.00 and reads "exactly on the paint"
+    for anything inside it.
+
+    *First minimum, not the smallest one.* Over a 40 px search a marking whose own paint is missing
+    would otherwise snap onto the neighbouring marking and report that distance as its own.
     """
     h, w = dist.shape
-    best = np.full(len(sub), np.inf)
-    found = np.zeros(len(sub), dtype=bool)
 
     def sample(p: np.ndarray) -> np.ndarray:
         x = np.clip(p[:, 0], 0.0, w - 1.001)
@@ -333,26 +351,34 @@ def _across_on_normal(sub: np.ndarray, normal: np.ndarray, dist: np.ndarray,
         bot = dist[y0 + 1, x0] * (1 - fx) + dist[y0 + 1, x0 + 1] * fx
         return top * (1 - fy) + bot * fy
 
-    for t in np.arange(0.0, limit + step, step):
-        open_ = np.flatnonzero(~found)
-        if not open_.size:
-            break
-        for sign in ((1.0,) if t == 0.0 else (1.0, -1.0)):
-            if not open_.size:
+    def one_way(direction: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        n = len(sub)
+        low = np.full(n, np.inf)          # smallest `dist` seen so far
+        at = np.full(n, np.inf)           # the offset it was seen at
+        done = np.zeros(n, dtype=bool)
+        for t in np.arange(0.0, limit + step, step):
+            here = sample(sub + t * direction)
+            nearer = ~done & (here < low)
+            low[nearer], at[nearer] = here[nearer], t
+            # Past the crossing: it came within tolerance and is now moving away again. Stopping
+            # at the FIRST such minimum rather than the smallest over the whole ray is what keeps
+            # a marking whose own paint is missing from snapping onto the next marking along.
+            done |= ~done & (low <= CROSSING_TOL) & (here > low + 1e-6)
+            if done.all():
                 break
-            here = sample(sub[open_] + sign * t * normal[open_])
-            hit = here < 1.0
-            if hit.any():
-                where = open_[hit]
-                # Sub-pixel, and not a nicety: the hit test fires anywhere within a pixel of the
-                # centreline, so reporting `t` alone quantises every good sample to 0.00 px and
-                # this metric would read "exactly on the paint" for anything under 1 px. The ray
-                # is the model line's normal and the painted line is near-parallel to it, so
-                # `dist` falls about 1:1 along the walk and the crossing is `t` plus what is left.
-                best[where] = t + here[hit]
-                found[where] = True
-                open_ = open_[~hit]
-    return best, found
+        # `at` is how far the walk went; `low` is what was still left when it turned around. Their
+        # sum is the offset in both cases and that is why it is not two branches: where the ray
+        # crossed the centreline `low` is ~0 and the answer is where the crossing was, and where it
+        # was already walking away the minimum is at `at = 0` and the answer is the whole of `low`.
+        # Reporting `at` alone gives 0.00 px for every sample within `CROSSING_TOL` of its paint,
+        # in the direction that points away from it.
+        return at + low, low <= CROSSING_TOL
+
+    plus, ok_plus = one_way(normal)
+    minus, ok_minus = one_way(-normal)
+    best = np.where(ok_plus & (~ok_minus | (plus <= minus)), plus, minus)
+    found = ok_plus | ok_minus
+    return np.where(found, best, np.inf), found
 
 
 def _sample_tangents(uv: np.ndarray, owner: np.ndarray) -> np.ndarray:

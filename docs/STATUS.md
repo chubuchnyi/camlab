@@ -11,9 +11,9 @@ projected pitch lands on the painted one.
 
 | clip | **across** | worst line | worst spot | markings | no paint across | under 20 px |
 |---|---|---|---|---|---|---|
-| `fan` (1080×608, phone, stands, floodlit night) | **1.88 px** | 1.69 px | 14.75 px | 6 | 11 % | 120/120 |
-| `broadcast` (1920×1080, professional) | **2.83 px** | 2.75 px | 12.72 px | 7 | 6 % | 60/60 |
-| `g15449383` (1920×1080) | 4.53 px | 2.92 px | 72.60 px | **2** | 23 % | not a verdict |
+| `fan` (1080×608, phone, stands, floodlit night) | **1.98 px** | 1.69 px | 14.75 px | 6 | 4 % | 120/120 |
+| `broadcast` (1920×1080, professional) | **3.02 px** | 2.75 px | 12.72 px | 7 | 1 % | 60/60 |
+| `g15449383` (1920×1080) | 3.87 px | 2.92 px | 72.60 px | **2** | **21 %** | not a verdict |
 
 **Read the markings column first.** Every error here is a max over the markings a frame scores, so
 on a frame holding two of them it is a max over two. The third clip was called solved on the
@@ -26,8 +26,15 @@ larger for that reason alone — measured 2026-08-12 and it changes what the rem
 nearest-paint distance charges a hole in the detected centreline to the camera: over a gap the
 nearest pixel is far ALONG the same line, and a line cannot be displaced along itself. `fan`'s far
 goal line splits **11.75 px along against 2.20 across**, and along beats across on 63 % of all
-worst spots. The `no paint across` column is that defect on its own — 11 % of `fan`'s samples have
-no detected centreline opposite them at all, which is task #14's subsystem, not the solver's.
+worst spots. The `no paint across` column is that defect on its own, and it is **not** spread over
+the clips: 4 % on `fan` and 1 % on `broadcast` against **21 % on `g15449383`**, which is also the
+clip that yields two markings and cannot be judged. Missing paint is that clip's problem
+specifically, not a general one — see #14.
+
+The first version of that column read 11 / 6 / 23 %, and two thirds of it was the measurement's own
+crossing tolerance rather than the detector. `CROSSING_TOL` and the walk that reports the first
+minimum are in `measure/residual.py`; the reason the tolerance cannot sit at 1.0 is a real defect
+one layer down, and it is written there.
 
 ## The pipeline, and why each stage is there
 

@@ -14,8 +14,8 @@ only the way in.
 
 | clip | **across** | worst line | worst spot | markings/frame | under 20 px |
 |---|---|---|---|---|---|
-| `fan` — 1080×608, a phone from the stands, floodlit night | **1.88 px** | 1.69 px | 14.75 px | 6 | 120/120 |
-| `broadcast` — 1920×1080, professional | **2.83 px** | 2.75 px | 12.72 px | 7 | 60/60 |
+| `fan` — 1080×608, a phone from the stands, floodlit night | **1.98 px** | 1.69 px | 14.75 px | 6 | 120/120 |
+| `broadcast` — 1920×1080, professional | **3.02 px** | 2.75 px | 12.72 px | 7 | 60/60 |
 
 A third clip is ingested and **not** solved, which is worth stating because it briefly looked
 solved: `g15449383` scores 2.92 px on **two markings** a frame against `fan`'s six. Every error
