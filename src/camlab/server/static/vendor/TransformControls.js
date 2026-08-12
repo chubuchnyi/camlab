@@ -103,6 +103,11 @@ class TransformControls extends Controls {
 		defineProperty( 'mode', 'translate' );
 		defineProperty( 'translationSnap', null );
 		defineProperty( 'rotationSnap', null );
+		// camlab: upstream has no sensitivity knob for rotation — only `rotationSnap`, which
+		// quantises the result without slowing the hand. Aiming a camera at 70 m is a tenth-of-a-
+		// degree job and the stock speed overshoots that by an order of magnitude. Multiplies
+		// ROTATION_SPEED below; 1 is upstream's behaviour.
+		defineProperty( 'rotationSpeed', 1 );
 		defineProperty( 'scaleSnap', null );
 		defineProperty( 'space', 'world' );
 		defineProperty( 'size', 1 );
@@ -452,7 +457,7 @@ class TransformControls extends Controls {
 
 			this._offset.copy( this.pointEnd ).sub( this.pointStart );
 
-			const ROTATION_SPEED = 20 / this.worldPosition.distanceTo( _tempVector.setFromMatrixPosition( this.camera.matrixWorld ) );
+			const ROTATION_SPEED = this.rotationSpeed * 20 / this.worldPosition.distanceTo( _tempVector.setFromMatrixPosition( this.camera.matrixWorld ) );
 
 			let _inPlaneRotation = false;
 

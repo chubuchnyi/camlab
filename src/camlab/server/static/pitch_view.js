@@ -26,6 +26,8 @@ const PAINT = 0xffffff;
 const UPRIGHT = 0x67e8f9;
 const CAM_OK = 0xffd24a;
 const CAM_BAD = 0xff3ea5;          // a frame the solver could not use: marked, never hidden (R-6)
+const CAM_DRAG = 0x63c7ff;         // the pose currently in a hand, so a preview cannot be mistaken
+                                   // for the solve it has not replaced yet
 const TRAIL = 0xffa640;
 
 const VIEW_DIR = [0, -0.86, 0.51];
@@ -90,12 +92,46 @@ export function createPitchView(cfg) {
   gizmoHelper.visible = false;
   scene.add(gizmoHelper);
   let dragging = false;
+  let shownIndex = 0;
+  // Aiming a 70 m shot is a tenth-of-a-degree job: at a 3000 px focal, 0.1 deg is about 5 px on
+  // the overlay, which is what the eye is being asked to judge. Stock speed moves whole degrees in
+  // a short drag and overshoots every time. Alt goes finer again, matching the keyboard's alt.
+  const ROTATE_SPEED = 0.25, ROTATE_FINE = 0.05;
+  gizmo.rotationSpeed = ROTATE_SPEED;
+  addEventListener("keydown", (e) => { if (e.key === "Alt") gizmo.rotationSpeed = ROTATE_FINE; });
+  addEventListener("keyup", (e) => { if (e.key === "Alt") gizmo.rotationSpeed = ROTATE_SPEED; });
+
   gizmo.addEventListener("dragging-changed", (e) => {
     // Orbit and drag both claim the pointer. Without this the camera slides while the whole view
     // spins around it, which is unusable and looks like a bug in the gizmo.
     orbit.enabled = !e.value;
     dragging = e.value;
-    if (!e.value && cfg.onDragEnd) cfg.onDragEnd(proxyState());
+    if (e.value) return;
+    // Back to the solve's own colour and the server's own overlay; the hand has let go.
+    drawCamera(shownIndex);
+    drawFramePlane(shownIndex);
+    if (cfg.onDragEnd) cfg.onDragEnd(proxyState());
+  });
+
+  // Live, on every pointer move, not on release. A drag that only shows its result when the mouse
+  // comes up is aim-and-check-and-undo, and a tenth of a degree cannot be aimed that way. Both
+  // halves are redrawn from the SAME proxy the release will commit, so the preview cannot promise
+  // something the write does not deliver.
+  gizmo.addEventListener("objectChange", () => {
+    if (!dragging) return;
+    drawCamera(shownIndex, dragProxy);
+    drawFramePlane(shownIndex, dragProxy);
+    // And window B, which is the half that decides anything. It renders the scene THROUGH
+    // `solved`, so aiming `solved` at the proxy makes the markings on the video follow the hand —
+    // no second projection to write and none to disagree with. `show()` calls
+    // `applySolvedCamera`, which puts it back the moment the frame changes.
+    // Composed, not assigned. `applySolvedCamera` sets `matrixAutoUpdate = false` because it
+    // writes the matrix itself, so copying position and quaternion onto `solved` changes nothing
+    // that renders — the preview would sit perfectly still and look like a dead event handler.
+    solved.matrix.compose(dragProxy.position, dragProxy.quaternion, solved.scale);
+    solved.matrix.decompose(solved.position, solved.quaternion, solved.scale);
+    solved.updateMatrixWorld(true);
+    if (cfg.onDragMove) cfg.onDragMove(proxyState());
   });
 
   /** The proxy as the SEVEN numbers the server speaks, never as a matrix.
@@ -216,31 +252,38 @@ export function createPitchView(cfg) {
    * NaN when the axis never gets there — pointing up, or level. That is not a rounding case: a
    * degenerate frame does exactly this. Fan frame 116 puts the intersection at -0.7 m, i.e.
    * BEHIND the camera, alongside a 47.7 deg roll and a focal pinned at the search bound.
+   *
+   * `pose` defaults to the solved camera. Passing the drag proxy is what lets the frustum and the
+   * frame plane follow a hand instead of jumping to their new place on release.
    */
-  function groundDistance(i) {
-    if (!applySolvedCamera(i)) return NaN;
+  function groundDistance(i, pose) {
+    if (!pose && !applySolvedCamera(i)) return NaN;
+    const at = pose || solved;
     const fwd = new THREE.Vector3();
-    solved.getWorldDirection(fwd);
-    const cz = cam.position[i][2];
+    at.getWorldDirection(fwd);
     if (Math.abs(fwd.z) < 1e-6) return NaN;
-    const t = -cz / fwd.z;
+    const t = -at.position.z / fwd.z;
     return t > 0 ? t : NaN;
   }
 
   /** The distance actually used: the manual override, else the ground intersection, else a
    *  fallback so a degenerate frame still draws something rather than vanishing. */
-  function planeDistanceFor(i) {
+  function planeDistanceFor(i, pose) {
     if (planeOverride != null) return planeOverride;
-    const g = groundDistance(i);
+    const g = groundDistance(i, pose);
     return Number.isFinite(g) ? Math.min(Math.max(g, 2), 400) : 40;
   }
 
-  function drawCamera(i) {
+  function drawCamera(i, pose) {
     clear(groups.camera);
-    if (!applySolvedCamera(i)) return;
+    if (!pose && !applySolvedCamera(i)) return;
+    if (pose && !(cam?.focal_px[i] > 0)) return;
+    const at = pose || solved;
 
-    const colour = cam.degenerate?.[i] ? CAM_BAD : CAM_OK;
-    const c = new THREE.Vector3(...cam.position[i]);
+    // A hand-held pose is drawn in its own colour. Without that the preview is indistinguishable
+    // from the solve and there is no way to see, mid-drag, that anything is being changed.
+    const colour = pose ? CAM_DRAG : (cam.degenerate?.[i] ? CAM_BAD : CAM_OK);
+    const c = at.position.clone();
 
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(0.9, 0.9, 0.9),
@@ -250,16 +293,16 @@ export function createPitchView(cfg) {
     groups.camera.add(body);
 
     // The frustum out to the frame plane, so the plane visibly IS what the camera sees.
-    const d = planeDistanceFor(i);
+    const d = planeDistanceFor(i, pose);
     const [hw, hh] = frustumHalf(i, d);
     const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]
-      .map(([x, y]) => solved.localToWorld(new THREE.Vector3(x, y, -d)));
+      .map(([x, y]) => at.localToWorld(new THREE.Vector3(x, y, -d)));
     for (const k of corners) groups.camera.add(polyline([c.toArray(), k.toArray()], colour));
     groups.camera.add(polyline([...corners, corners[0]].map((v) => v.toArray()), colour));
 
     // The optical axis, past the plane: a frustum alone leaves the eye guessing which way is up
     // inside it, and where the camera POINTS is the thing being judged.
-    const far = solved.localToWorld(new THREE.Vector3(0, 0, -d * 1.4));
+    const far = at.localToWorld(new THREE.Vector3(0, 0, -d * 1.4));
     groups.camera.add(polyline([c.toArray(), far.toArray()], colour));
   }
 
@@ -285,10 +328,11 @@ export function createPitchView(cfg) {
     }
   }
 
-  function drawFramePlane(i) {
+  function drawFramePlane(i, pose) {
     clear(groups.frameplane);
     if (!cam || !frameTex || !(cam.focal_px[i] > 0)) return;
-    const d = planeDistanceFor(i);
+    const at = pose || solved;
+    const d = planeDistanceFor(i, pose);
     const [hw, hh] = frustumHalf(i, d);
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(2 * hw, 2 * hh),
@@ -298,8 +342,8 @@ export function createPitchView(cfg) {
     // view pixel for pixel and anything drawn between the two lands on the video where it belongs.
     // That is the point of putting it in 3D at all: it makes a DEPTH error visible from the orbit
     // view, which a flat 2D overlay cannot show.
-    plane.position.copy(solved.localToWorld(new THREE.Vector3(0, 0, -d)));
-    plane.quaternion.copy(solved.quaternion);
+    plane.position.copy(at.localToWorld(new THREE.Vector3(0, 0, -d)));
+    plane.quaternion.copy(at.quaternion);
     groups.frameplane.add(plane);
   }
 
@@ -534,6 +578,7 @@ export function createPitchView(cfg) {
 
   /** Show frame `i`: repoint the solved camera, redraw its frustum, retexture the frame plane. */
   async function show(i) {
+    shownIndex = i;
     if (!cam) return null;
     const url = `/api/run/${clip.clip_id}/frame/${i}`;
     await new Promise((res) => {

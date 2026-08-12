@@ -149,7 +149,7 @@
       <label title="drag the camera in the 3D view and nudge it with the keyboard">
         <input type="checkbox" id="e-drag" /> adjust the camera by hand
       </label>
-      <label class="row" id="e-moderow">gizmo
+      <label class="row" id="e-moderow" title="turn = rotate the camera; hold Alt while dragging for a fifth of the step">
         <select id="e-mode">
           <option value="translate">move</option>
           <option value="rotate">turn</option>
@@ -252,7 +252,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=17";
+import { createPitchView } from "/static/pitch_view.js?v=18";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -263,6 +263,18 @@ const view = createPitchView({
   // A drag reports where the camera was let go, and it is written through the SAME manual path a
   // typed number takes — so it lands in camera_manual.json, is reset by the same buttons, and the
   // fields update to match. A second write path would be a second place for the two to disagree.
+  // Live, while the mouse is still down. The fields are the thing a human reads to know how far
+  // they have moved, and window B redraws itself from the same proxy — so the number, the frustum
+  // and the markings on the video all move together instead of jumping on release.
+  onDragMove: (st) => {
+    const [x, y, z] = st.position;
+    $("e-x").value = x.toFixed(2);
+    $("e-y").value = y.toFixed(2);
+    $("e-z").value = z.toFixed(2);
+    if (Number.isFinite(st.yaw)) $("e-yaw").value = st.yaw.toFixed(2);
+    if (Number.isFinite(st.elev)) $("e-elev").value = st.elev.toFixed(2);
+    if (Number.isFinite(st.roll)) $("e-roll").value = st.roll.toFixed(2);
+  },
   onDragEnd: async (st) => {
     const [x, y, z] = st.position;
     $("e-x").value = x.toFixed(2);

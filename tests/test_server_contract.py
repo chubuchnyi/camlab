@@ -49,6 +49,27 @@ def test_the_vendored_renderer_is_the_one_we_pinned():
         assert got == want, f"{name} is not the vendored build"
 
 
+def test_the_vendored_patches_are_still_applied():
+    """The half a checksum cannot do.
+
+    `SHA256SUMS` fails when a vendored file changes unexpectedly. It passes happily when a
+    re-vendor **removes** a change we made on purpose — the sum gets updated as part of the
+    re-vendor and nothing says the behaviour went with it. Each patch in `vendor/PATCHES.md` is
+    asserted here by the thing it exists to provide.
+    """
+    vendor = STATIC / "vendor"
+    assert (vendor / "PATCHES.md").exists(), "vendor/PATCHES.md is what says these are deliberate"
+
+    tc = (vendor / "TransformControls.js").read_text(encoding="utf-8")
+    assert "defineProperty( 'rotationSpeed', 1 )" in tc, (
+        "the rotationSpeed knob is gone from TransformControls.js — upstream has no way to slow "
+        "a rotation drag, only rotationSnap, and aiming at 70 m needs a tenth of a degree"
+    )
+    assert "this.rotationSpeed * 20" in tc, "rotationSpeed is defined but no longer multiplies in"
+    view = (STATIC / "pitch_view.js").read_text(encoding="utf-8")
+    assert "gizmo.rotationSpeed" in view, "nothing sets it, so the patch buys nothing"
+
+
 def test_health():
     r = client.get("/api/health")
     assert r.status_code == 200
