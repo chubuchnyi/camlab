@@ -57,6 +57,33 @@ The second one is the check that never touches the markings: mowing stripes are 
 metres, so through a right camera their period holds while the operator zooms. On `fan` it holds at
 11.00 m ± 2.3 % across a 1.61× zoom.
 
+## What it needs, and what it does not
+
+**No GPU. No neural network. No ML runtime of any kind.** Every stage is classical computer vision
+and numerical optimisation: SIFT features and a MAGSAC homography for frame-to-frame motion, a
+distance transform and Hough or LSD for the markings, `scipy.optimize` for the fit, a k-d tree for
+the paint residual. Nothing is trained, nothing is downloaded, and there is no checkpoint to lose.
+The whole install is numpy, scipy, opencv-headless and FastAPI.
+
+Measured on a laptop CPU — 11th-gen i7-11850H, no GPU in the machine:
+
+| | |
+|---|---|
+| full chain, 60 frames at 1920×1080 | **155 s** |
+| per-frame work (paint, lines, refit, score) | **340 ms** |
+| peak memory, per-frame work | 180 MB |
+| peak memory, full chain | 1.1 GB |
+| install size | 482 MB |
+| a 60-frame run on disk | ~24 MB of JPEG |
+
+**One core is the whole requirement.** The work is single-threaded and does not benefit from more:
+342 ms a frame on one thread, 324 ms on sixteen — five per cent, which is noise. Several stages are
+embarrassingly parallel across frames and simply are not parallelised, so more cores *could* help,
+but that is work nobody has done rather than a property of the method.
+
+The GPU box in `scripts/deploy.sh` is used because it is a machine that is always on and reachable,
+not because anything here needs it. This runs on a laptop.
+
 ## Run it
 
 ```bash

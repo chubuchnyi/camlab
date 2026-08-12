@@ -123,6 +123,19 @@ rectified correctly. A check to run on a camera you already believe, never a way
 - **Random-search bootstrap.** 4 000, 20 000 and 60 000 candidates return the *identical* wrong
   camera.
 
+## Hardware, and the absence of models
+
+**No GPU, no neural network, no ML runtime.** SIFT + MAGSAC for frame-to-frame motion, distance
+transform + Hough/LSD for the markings, `scipy.optimize` for the fit, a k-d tree for the residual.
+Nothing trained, nothing downloaded, no checkpoint to lose.
+
+Measured on an i7-11850H laptop with no GPU: the full chain over 60 frames of 1920×1080 takes
+**155 s** and peaks at 1.1 GB; the per-frame work is **340 ms** and 180 MB. **One core is the
+requirement** — 342 ms a frame on one thread against 324 ms on sixteen, which is noise. Several
+stages are parallel across frames and are not parallelised; that is undone work, not a limit.
+
+The GPU box exists because it is always on and reachable, not because anything needs it.
+
 ## Running it
 
 ```bash
