@@ -89,6 +89,12 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **Hough returns several straight chords of one arc, and they look like several markings.** On
+  `broadcast` frame 0 three of the four second-family detections are all the near penalty arc —
+  marking 22, 16.9 m of path across a 14.6 m chord. The 2+2 correspondence generator then has one
+  usable straight marking in that family instead of three, and cannot produce the right camera at
+  all: its best candidate puts the pitch **248.5 px** from where the truth does, against 1.2 px on
+  `fan` frame 0. Every detection is on real paint, so no #14 filter would touch it.
 - **Distance between optical centres is not distance between cameras.** Every "the pool holds a
   hypothesis N metres from the truth" number in this project's #11 work was measured that way, and
   on `broadcast` frame 0 the hypothesis whose centre sits **3.83 m** from the truth carries a focal
