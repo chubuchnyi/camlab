@@ -87,11 +87,21 @@ position is pinned to about a metre. It only looked flat because nobody had sear
 
 ## Editing by hand
 
-Everything lands in `camera_manual.json`, laid over the solve, which is never rewritten.
+Everything lands in `camera_manual.json`, laid over the solve, which is never rewritten. **And the
+solver reads it** — that was not true until 2026-08-12, and the button that ran the chain discarded
+the operator's anchor on every press without saying so. On `CRO_MOR_194948` frame 0 the difference
+is 2 markings at 26.84 px against **9 markings at 3.54 px**. `solve/hand.py` is the one reader.
 
 - the seven numbers, typed
+- **auto-fit this frame** — aim it roughly, the solver finishes it. A rough aim at 445 px comes back
+  at 4.7 px on `broadcast` frame 0, and 2.6 on a second press because LM is local. It refuses
+  rather than damages: `refit._accept` takes the fit only if the worst offset fell and no
+  correspondence was lost. Under `MIN_MATCHED` matches it says *aim closer* instead, which is the
+  opposite advice for the opposite problem.
 - **drag** the camera in the 3D view — translate or rotate, the gizmo sends the three angles the
-  server speaks, never a matrix
+  server speaks, never a matrix. The rotate gizmo runs at a quarter speed (a fifth again with Alt)
+  because aiming at 70 m is a tenth-of-a-degree job, and the frustum, the frame plane, the seven
+  numbers and the markings on the video all follow the hand live rather than jumping on release.
 - **keyboard**: arrows for X/Y, PgUp/PgDn for Z, shift+arrows for aim, `[ ]` roll, `− =` focal,
   `alt` for a fifth of the step, `, .` for frames
 - **copy from frame N**, then nudge
@@ -139,11 +149,22 @@ best hypothesis in the pool from **11.9 m to 3.7 m** and the focal from 28 % wro
 The gates are not the problem: the solved camera scores 0.0 % unmatched on every frame checked, so
 `max_missing` would have let it through. Do #14's precision half first; the two are one task.
 
-**#11 — find the first camera automatically.** Five ranking attempts: 113 m → 113 m → 20.9 m →
-54 m → 128 m from the truth. The generator is fine — the right answer *is* in the pool, 4.8 m from
-the truth with the focal 11 % off. Choosing is what fails, and not because the chooser is bad:
-between the half-turn symmetry and the focal/distance trade, many cameras genuinely fit. It needs
-information the markings do not carry.
+**#11 — find the first camera automatically. It now works on one anchor of six**, which is one more
+than the register records. `bootstrap_clip.py fan --frame 0` returns **1.0 px over three probe
+frames on 298 samples**, 3.11 m from the truth with the focal 1.7 % off — a usable automatic seed,
+where the register says 10.7 px on 66 samples. It also reports the half-turn twin, correctly.
+
+The other five anchors tried — `fan` 40, `broadcast` 0, `g11710897` 0, `g14604660` 0, `g15449383` 0
+— all print *"no plausible camera at all on the anchor frame"*. On `fan` 40 the cause is measured
+and is a defect: the **arc gate rejects the true camera** when the operator has zoomed and no arc is
+in the picture (`arc_n = 0`), so a frame whose pool holds a camera 2.6 m from the truth is thrown
+out whole. That is R-6 broken against the solver — unmeasurable read as failed. Fixing it is the
+next thing to do here.
+
+Two things the register said that did not survive re-measurement: *"the right answer is in the pool
+4.8 m from the truth"* (it is 11.9 m on `fan` 8, and 2.6–2.8 m on `fan` 0 and 40 — it varies by
+frame), and *"choosing is what fails"* (on `fan` 8 the pool's best is 11.9 m, so no chooser could
+have found it).
 
 **#23 — a camera that really travels.** Deferred: no such clip exists yet. The trap is written
 down — a real dolly move and the focal/distance degeneracy look identical in the 3D view, and on a
