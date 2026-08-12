@@ -509,7 +509,8 @@ export function createPitchView(cfg) {
   }
 
   /** Load a run: its clip record and its solve. */
-  async function loadRun(clipId, which = "camera_auto.json") {
+  // No default name here either: an empty `which` lets the server pick one the clip actually has.
+  async function loadRun(clipId, which = "") {
     const [runs, camResp] = await Promise.all([
       fetch("/api/runs").then((r) => r.json()),
       fetch(`/api/run/${clipId}/camera?which=${which}`),

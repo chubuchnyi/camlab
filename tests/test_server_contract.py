@@ -386,3 +386,53 @@ def test_the_camera_can_be_turned_and_nudged_without_ever_posting_a_matrix():
     )
     assert 'id="e-keys"' in page, "a mode that repurposes the arrow keys must say so on screen"
     assert "adjusting()) return;" in page, "and the frame stepper must yield while it is on"
+
+
+def test_a_clip_opens_on_a_camera_it_actually_has():
+    """`broadcast` has never had a `camera_auto.json` — its cameras are known, carry, healed,
+    fixed, smooth — and both the API default and the page's fallback asked for that name, so
+    selecting the clip 404'd and the viewer showed nothing."""
+    from camlab.runs import ClipInfo, list_runs
+
+    c = TestClient(app)
+    for cid in list_runs():
+        have = {p.name for p in ClipInfo.load(cid).dir.glob("camera_*.json")
+                if "manual" not in p.name}
+        if not have:
+            continue
+        r = c.get(f"/api/run/{cid}/camera")
+        assert r.status_code == 200, f"{cid} does not open without an explicit camera"
+        assert r.json()["which"] in have, f"{cid} opened on a camera it does not have"
+
+    page = (STATIC / "index.html").read_text()
+    assert 'camera_auto.json"' not in re.search(r"function camWhich[\s\S]*?\}", page).group(0), (
+        "no hardcoded camera name in the page's fallback"
+    )
+
+
+def test_the_camera_list_is_rebuilt_per_clip_not_per_count():
+    """It rebuilt only when the NUMBER of cameras changed, so two clips with the same count would
+    leave the previous one's names in the list — and picking one asks a clip for a file it has
+    not got."""
+    page = (STATIC / "index.html").read_text()
+    assert "camsel\").dataset.of" in page, "the list must be keyed on the camera NAMES"
+    assert "options.length !== cam.available.length" not in page
+
+
+def test_long_jobs_show_progress_and_lock_the_controls():
+    """A long job leaves the page looking idle otherwise, and every control it does not own is a
+    way to start a second job on top of the first — uploading while a solve runs would have both
+    writing camera files for the same clip."""
+    page = (STATIC / "index.html").read_text()
+    css = (STATIC / "style.css").read_text()
+
+    assert 'id="busy"' in page and "function setBusy" in page
+    assert "LOCKABLE" in page and "el.disabled = busy" in page
+    for owned in ("u-go", "s-go", "clip", "camsel", "scrub"):
+        assert f'"{owned}"' in re.search(r"const LOCKABLE = \[[\s\S]*?\];", page).group(0), (
+            f"{owned} can start or disturb a job and must be locked"
+        )
+    assert "indeterminate" in page and "indeterminate" in css, (
+        "an upload cannot report a fraction, so the bar must be able to say 'working' without one"
+    )
+    assert ":disabled" in css, "a locked page must look locked, not frozen"

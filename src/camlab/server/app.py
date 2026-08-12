@@ -81,6 +81,25 @@ def _camera_files(info) -> list[str]:
     return sorted(p.name for p in info.dir.glob("camera_*.json") if "manual" not in p.name)
 
 
+#: Which camera to open a clip on when the caller does not say. In order of how much has been done
+#: to it, best last-solved first. `camera_auto.json` is at the END rather than hardcoded as the
+#: default, which it used to be: `broadcast` has never had one — its cameras are `known`, `carry`,
+#: `healed`, `fixed`, `smooth` — so selecting that clip 404'd and the viewer showed nothing.
+_CAMERA_PREFERENCE = ("camera_smooth.json", "camera_fixed.json", "camera_healed.json",
+                      "camera_carry.json", "camera_auto.json", "camera_known.json",
+                      "camera_start.json")
+
+
+def _default_camera(info) -> str:
+    have = _camera_files(info)
+    if not have:
+        raise HTTPException(404, f"{info.clip_id} has no camera at all")
+    for name in _CAMERA_PREFERENCE:
+        if name in have:
+            return name
+    return have[0]
+
+
 def _load_camera(info, which: str) -> dict:
     """A solve plus any hand edits laid over it.
 
@@ -194,7 +213,7 @@ async def upload(video: UploadFile = _F_VIDEO, clip_id: str = _F_CLIP,
 
 
 @app.get("/api/run/{clip_id}/camera")
-def camera(clip_id: str, which: str = "camera_auto.json") -> dict:
+def camera(clip_id: str, which: str = "") -> dict:
     """The solve, as written. The viewer draws exactly this — no smoothing, no interpolation.
 
     A frame the solver could not use comes back marked, not removed: `focal_px == 0` and
@@ -202,6 +221,7 @@ def camera(clip_id: str, which: str = "camera_auto.json") -> dict:
     is the failure mode R-6 exists to prevent, applied to the camera instead of to a player.
     """
     info = ClipInfo.load(clip_id)
+    which = which or _default_camera(info)
     blob = _load_camera(info, which)
     blob["fps"] = info.fps
     blob["first_frame"] = info.first_frame

@@ -179,3 +179,20 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 #e-moderow { display: grid; grid-template-columns: auto 1fr; gap: 6px; align-items: center; }
 #e-moderow select { background: #262a31; color: #d7dae0; border: 1px solid #363b44;
                     border-radius: 4px; padding: 2px 4px; font: inherit; }
+
+/* One progress bar for every long job, at the top of the panel where a running job cannot be
+   scrolled out of sight. Determinate when the job counts its own steps; animated when it cannot,
+   which says "working" without claiming a progress nobody knows. */
+#busy { margin: 0 0 12px; }
+#busylabel { font-size: 11px; color: #8b929e; margin-bottom: 4px; }
+#busytrack { height: 6px; background: #262a31; border-radius: 3px; overflow: hidden; }
+#busyfill { height: 100%; width: 0; background: #4a90d9; transition: width .25s ease; }
+#busytrack.indeterminate #busyfill {
+  width: 40% !important; transition: none;
+  animation: busyslide 1.1s ease-in-out infinite;
+}
+@keyframes busyslide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+/* Disabled controls have to LOOK disabled, or a locked page reads as a frozen one. */
+#panel input:disabled, #panel select:disabled, #panel button:disabled,
+#bar input:disabled, #bar button:disabled { opacity: .45; cursor: not-allowed; }
+body.busy #bstage, body.busy #view { opacity: .85; }

@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=20" />
+  <link rel="stylesheet" href="/static/style.css?v=21" />
 </head>
 <body>
 
@@ -73,6 +73,12 @@
 
   <div class="split" id="split-p" title="drag to resize"></div>
   <aside id="panel">
+    <!-- One bar for every long job. Determinate when the job reports steps (the solve does),
+         indeterminate when it cannot (an upload's bytes are the browser's, not ours). -->
+    <div id="busy" hidden>
+      <div id="busylabel"></div>
+      <div id="busytrack"><div id="busyfill"></div></div>
+    </div>
     <h2>Clip</h2>
     <select id="clip"></select>
     <!-- Upload, so a clip nobody has tuned anything for can be tried. Every number in this repo
@@ -363,11 +369,16 @@ async function openClip(id) {
     (clip.crop ? ` (cropped ${clip.crop.join(",")})` : " (uncropped)") +
     ` · ${clip.n_frames} frames @ ${clip.fps}fps`;
   $("model").textContent = cam.model;
-  if (cam.available && $("camsel").options.length !== cam.available.length) {
-    $("camsel").innerHTML = cam.available
+  // Rebuilt on every clip, unconditionally. It used to rebuild only when the COUNT changed, so two
+  // clips with the same number of cameras would leave the previous one's names in the list — and
+  // selecting one of them asks a clip for a file it does not have.
+  const want = (cam.available || []).join("\u0000");
+  if ($("camsel").dataset.of !== want) {
+    $("camsel").dataset.of = want;
+    $("camsel").innerHTML = (cam.available || [])
       .map((f) => `<option value="${f}">${f.replace(/^camera_|\.json$/g, "")}</option>`).join("");
-    $("camsel").value = cam.which;
   }
+  $("camsel").value = cam.which;
   $("bstage").style.aspectRatio = `${clip.width} / ${clip.height}`;
 
   const live = cam.focal_px.filter((f) => f > 0);
@@ -674,10 +685,12 @@ async function pollSolve(id) {
     const d = await (await fetch(`/api/run/${id}/solve`)).json();
     if (d.state === "running") {
       $("s-note").textContent = `${d.step}/${d.of} · ${d.stage}`;
+      setBusy(false);                     // replace the previous tick's hold rather than stack it
+      setBusy(true, `solving · ${d.stage}`, d.of ? d.step / d.of : undefined);
       return;
     }
     clearInterval(solvePoll); solvePoll = null;
-    $("s-go").disabled = false;
+    setBusy(false);
     const lines = Object.entries(d.stages || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
     $("s-note").textContent = lines || d.stage || d.state;
     if (d.state === "done") {
@@ -694,7 +707,7 @@ async function pollSolve(id) {
 $("s-go").onclick = async () => {
   if (!view.clip) return;
   const id = view.clip.clip_id;
-  $("s-go").disabled = true;
+  setBusy(true, "solving · starting", 0);
   $("s-note").textContent = "starting…";
   try {
     const r = await fetch(`/api/run/${id}/solve?anchor=${+$("s-anchor").value}` +
@@ -705,10 +718,41 @@ $("s-go").onclick = async () => {
     solvePoll = setInterval(() => pollSolve(id), 2000);
   } catch (e) {
     err("could not start the solve: " + (e.message || e));
-    $("s-go").disabled = false;
+    setBusy(false);
     $("s-note").textContent = "";
   }
 };
+
+// Locking, in one place. A long job leaves the page looking idle otherwise, and every control it
+// does not own is a way to start a second job on top of the first — uploading while a solve runs
+// would have both writing camera files for the same clip.
+const LOCKABLE = ["clip", "camsel", "u-go", "u-file", "u-name", "u-frames", "u-first",
+                  "s-go", "s-anchor", "e-flip", "e-reset", "e-resetall", "e-copy", "e-copyfrom",
+                  "e-clip", "e-drag", "e-mode", "play", "scrub",
+                  "e-x", "e-y", "e-z", "e-yaw", "e-elev", "e-roll", "e-focal"];
+let busyDepth = 0;
+
+function setBusy(on, label, frac) {
+  busyDepth = Math.max(0, busyDepth + (on ? 1 : -1));
+  const busy = busyDepth > 0;
+  $("busy").hidden = !busy;
+  if (label !== undefined) $("busylabel").textContent = label;
+  const fill = $("busyfill");
+  // A determinate bar needs a number; without one it animates, which says "working" without
+  // claiming a progress it does not know.
+  if (typeof frac === "number") {
+    $("busytrack").classList.remove("indeterminate");
+    fill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+  } else if (busy) {
+    $("busytrack").classList.add("indeterminate");
+    fill.style.width = "100%";
+  }
+  for (const id of LOCKABLE) {
+    const el = $(id);
+    if (el) el.disabled = busy;
+  }
+  document.body.classList.toggle("busy", busy);
+}
 
 function adjusting() { return $("e-drag").checked; }
 
@@ -786,7 +830,9 @@ $("e-resetall").onclick = async () => {
   await reloadCamera();
 };
 
-function camWhich() { return $("camsel").value || "camera_auto.json"; }
+// Whatever is selected, and nothing if nothing is — a hardcoded fallback here is how `broadcast`,
+// which has never had a `camera_auto.json`, ended up requesting one and getting a 404.
+function camWhich() { return $("camsel").value || ""; }
 
 async function reloadCamera() {
   const keep = frame;
@@ -838,11 +884,11 @@ $("u-go").onclick = async () => {
   const f = $("u-file").files[0];
   if (!f) { err("choose a video first"); return; }
   const btn = $("u-go");
-  btn.disabled = true;
   const was = btn.textContent;
   btn.textContent = "decoding…";
   err("");
-  $("u-note").textContent = `uploading ${(f.size / 1e6).toFixed(0)} MB…`;
+  setBusy(true, `uploading and decoding ${(f.size / 1e6).toFixed(0)} MB…`);
+  $("u-note").textContent = "";
   try {
     const body = new FormData();
     body.append("video", f);
@@ -859,7 +905,7 @@ $("u-go").onclick = async () => {
     err("upload failed: " + (e.message || e));
     $("u-note").textContent = "";
   } finally {
-    btn.disabled = false;
+    setBusy(false);
     btn.textContent = was;
   }
 };
