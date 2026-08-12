@@ -186,3 +186,14 @@ Each copied file carries a header saying where it came from. Do not hand-sync th
 
 `tests/test_golden_real_camera.py` pins the copy against the same real measurement pitch3d pins:
 focal 4169.32 px, one optical centre for 60 frames at (−2.29, −70.13, 17.22) m.
+
+**The transfer format is schema 2 and it is not the old one.** pitch3d's schema 1 held `focal` as a
+single scalar for a whole clip; collapsing camlab's cameras to that costs 65 % of the accuracy on
+the fan clip — 1.69 px becomes 4.88, five frames of thirty leave the 20 px band — and nothing on
+clips that do not zoom. Schema 2 writes `focal_px` and `position` **per frame**, every key present
+on every camera, and `read_npz` refuses schema 1 by name rather than guessing at it. There is no
+compatibility branch: pitch3d is being changed rather than accommodated.
+
+```bash
+.venv/bin/python scripts/export_camera.py <clip> [--camera camera_smooth.json]  # -> calib/<clip>.npz
+```
