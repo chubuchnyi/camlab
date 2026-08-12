@@ -39,6 +39,12 @@ Ordered by how much they cost.
   algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
   Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
   below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
+- **The arc gate rejects the TRUE camera on a zoomed frame.** `bootstrap_clip.py` demands 8+ arc
+  samples on paint, and on `fan` 40 and 80 the operator has zoomed to 4499 and 4781 px so no arc is
+  in the picture at all — the solved camera scores `arc_n = 0` and is thrown out. "Cannot be
+  measured" is being read as "failed", which is R-6 broken against the solver rather than against a
+  player. It is why frame 40 reports "no plausible camera at all" on a pool that holds a camera
+  2.6 m from the truth.
 - **A filter designed on one frame works on that frame.** An "inset from the edge of the playing
   surface" test separated markings from the advertising-board join perfectly on `fan` frame 8,
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
