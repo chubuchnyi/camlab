@@ -41,6 +41,33 @@ Refitting all 120 frames at each cut, judged by the paint:
 **Nine more frames, and the median does not move**, which is the informative part: what the cut
 removes was carrying none of the fit. `MIN_MERGED_PX` is now 100.
 
+## The scope of this, checked afterwards and narrower than it was written
+
+Asked whether any of it had been tried on another clip, the answer was no, and the check is worth
+recording because of how it nearly went. Re-run across three clips:
+
+| clip | markings | others | median sag, markings | median sag, others | reads as |
+|---|---|---|---|---|---|
+| `fan` | **208** | **88** | 0.20 px | 0.13 px | backwards |
+| `broadcast` | 118 | **7** | 0.11 px | 0.32 px | forwards |
+| `g15449383` | **3** | 19 | 0.09 px | 0.13 px | forwards |
+
+The first reading of that table was "the finding flips on `broadcast`". It does not: **both
+apparent reversals rest on 7 and 3 observations.** This project's own register says seven samples
+agreeing on a binary outcome happens by chance about once in sixty, and it has now caught the same
+mistake three times in one session.
+
+So the honest scope: **this is measured on `fan` and untested anywhere else**, because no other
+clip yields enough of both classes. The reason is itself informative — `broadcast`'s detector
+returns almost no non-markings (7 across 30 frames; its turf is clean) and `g15449383` returns
+almost no markings (3; the camera sees little pitch). A discriminator cannot be evaluated on a clip
+that has nothing to discriminate.
+
+The length separation is also weaker on `fan` now than the table above shows — 262 px against
+226 px rather than 216 against 86 — because `MIN_MERGED_PX` was raised to 100 off the back of that
+very measurement, and the cut has already removed what the separation was made of. Consistent, not
+contradictory, and worth stating so the two numbers are not read as a disagreement.
+
 ## Two cautions
 
 **This is the POST-merge length, and the distinction matters.** A cut on LSD's raw fragments at

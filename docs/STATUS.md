@@ -88,7 +88,7 @@ Everything lands in `camera_manual.json`, laid over the solve, which is never re
 
 | signal | verdict |
 |---|---|
-| straightness | **points the wrong way** — non-markings are straighter (0.14 px against 0.21) because stripes are themselves straight and shorter |
+| straightness | **points the wrong way on `fan`** — non-markings are straighter, 0.13 px against 0.20 over 208 markings and 88 others. Untested elsewhere: `broadcast` yields 7 non-markings and `g15449383` yields 3 markings, and neither is a sample |
 | cross-ratio | camera-free and selective on paper (8.7 % of the range at 0.05), but 70 % of impostor quads pass: both the admissible values and the observed ones pile into 1.0–1.2 |
 | length | **the only thing that helped** — 216 px against 86 px, and a 100 px cut took 81 → 90 frames under 20 px |
 

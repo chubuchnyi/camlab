@@ -13,6 +13,11 @@ Ordered by how much they cost.
 - **Never compare medians without comparing sample counts.** The first M-1 probe returned a
   confident, wrong verdict this way, and the focal had run away to 87 px unnoticed. Coverage and
   physicality guards exist because of it.
+- **A conclusion measured on one clip is a conclusion about one clip.** Most of what was settled on
+  2026-08-11 — the overlap fix, the straightness refutation, the cross-ratio, the principal point —
+  was measured on `fan` alone. Re-checked on `broadcast` and a third clip, the straightness result
+  appeared to reverse, and the reversal turned out to rest on **7 and 3 observations**. Both halves
+  are the lesson: check another clip, then count what the other clip actually gave you.
 - **Seven samples agreeing on a binary outcome means nothing** — it happens by chance about once in
   sixty. A curvature probe found 7 markings all bowing the same way, median 2.72 px, a textbook
   pincushion signature. Over 514 markings it is 42/58, i.e. zero.
