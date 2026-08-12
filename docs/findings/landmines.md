@@ -39,6 +39,11 @@ Ordered by how much they cost.
   algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
   Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
   below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
+- **A filter designed on one frame works on that frame.** An "inset from the edge of the playing
+  surface" test separated markings from the advertising-board join perfectly on `fan` frame 8,
+  where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
+  of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
+  which genuinely runs near the surface edge and is the longest line in the picture.
 - **A spurious line costs nothing on a solved clip and everything in the bootstrap.** #14's
   precision half was measured against the residual on `fan` and `broadcast`, found worthless, and
   parked — but on a solved clip the camera is already right and a non-marking changes nothing.
