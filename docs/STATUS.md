@@ -7,34 +7,28 @@ Last measured 2026-08-12. Read this and `findings/landmines.md`; that is the col
 ## The chain works
 
 A clip goes in, a camera comes out, and the camera is right by the only test that counts — the
-projected pitch lands on the painted one.
+projected pitch lands on the painted one, judged by eye as well as by the number.
 
 | clip | **across** | worst line | worst spot | markings | no paint across | under 20 px |
 |---|---|---|---|---|---|---|
 | `fan` (1080×608, phone, stands, floodlit night) | **1.82 px** | 1.65 px | 15.54 px | 6 | 2 % | 120/120 |
 | `broadcast` (1920×1080, professional) | **2.96 px** | 2.75 px | 12.14 px | 7 | 1 % | 60/60 |
+| `CRO_MOR_194948` (1920×1080, one hand anchor) | **4.22 px** | 4.04 px | 13.87 px | 9 | — | 120/120 |
 | `g15449383` (1920×1080) | 4.47 px | 3.49 px | 72.60 px | **2** | **21 %** | not a verdict |
 
 **Read the markings column first.** Every error here is a max over the markings a frame scores, so
-on a frame holding two of them it is a max over two. The third clip was called solved on the
-strength of "40 of 40 frames under 20 px" and it is not: it scores 2 markings and 76 samples where
-`fan` scores 6 and 165. `Residual.supported` and `bench_metric_ceiling.py` now say so rather than
-leaving it to be noticed.
+on a frame holding two it is a max over two. `g15449383` was called solved on "40 of 40 frames under
+20 px" and is not; `Residual.supported` now refuses that rather than leaving it to be noticed.
 
-**`across` is the camera. `worst spot` is the camera plus the detector**, and on `fan` it is 7.9×
-larger for that reason alone — measured 2026-08-12 and it changes what the remaining error is. A
-nearest-paint distance charges a hole in the detected centreline to the camera: over a gap the
-nearest pixel is far ALONG the same line, and a line cannot be displaced along itself. `fan`'s far
-goal line splits **11.75 px along against 2.20 across**, and along beats across on 63 % of all
-worst spots. The `no paint across` column is that defect on its own, and it is **not** spread over
-the clips: 4 % on `fan` and 1 % on `broadcast` against **21 % on `g15449383`**, which is also the
-clip that yields two markings and cannot be judged. Missing paint is that clip's problem
-specifically, not a general one — see #14.
+**`across` is the camera. `worst spot` is the camera plus the paint detector** — 7.9× larger on
+`fan` for that reason alone, because a nearest-paint distance charges a hole in the detected
+centreline to the camera, and a line cannot be displaced along itself. Full measurement:
+`findings/worst-spot-is-the-detector-not-the-camera-2026-08-12.md`.
 
-The first version of that column read 11 / 6 / 23 %, and two thirds of it was the measurement's own
-crossing tolerance rather than the detector. `CROSSING_TOL` and the walk that reports the first
-minimum are in `measure/residual.py`; the reason the tolerance cannot sit at 1.0 is a real defect
-one layer down, and it is written there.
+`CRO_MOR_194948` is the first clip solved from an operator's own anchor in the viewer, and it took
+three fixes landing the same day to work at all: the solver did not read hand edits, the anchor
+refit was position-locked, and the centreline extractor was not a thinning algorithm. Before them
+it scored 2 markings at 26.84 px and no verdict.
 
 ## The pipeline, and why each stage is there
 
@@ -110,61 +104,46 @@ is 2 markings at 26.84 px against **9 markings at 3.54 px**. `solve/hand.py` is 
 
 ## Open, and why
 
-**#14 — tell a marking from a mowing stripe, a shadow edge or a goal net.** Three signals measured:
+Each of these has a findings doc with the numbers; what is here is the verdict and the pointer.
 
-| signal | verdict |
-|---|---|
-| straightness | **points the wrong way on `fan`** — non-markings are straighter, 0.13 px against 0.20 over 208 markings and 88 others. Untested elsewhere: `broadcast` yields 7 non-markings and `g15449383` yields 3 markings, and neither is a sample |
-| cross-ratio | camera-free and selective on paper (8.7 % of the range at 0.05), but 70 % of impostor quads pass: both the admissible values and the observed ones pile into 1.0–1.2 |
-| length | **the only thing that helped** — 216 px against 86 px, and a 100 px cut took 81 → 90 frames under 20 px |
+**#14 — tell a marking from a mowing stripe, a shadow edge, a net or an advertising board.**
 
-Length is a filter, not a discriminator: 39 % of non-markings still get through. Cheap geometric
-signals are exhausted.
-
-**Its recall half found one real thing and it is fixed** (2026-08-12). The "centreline" was the
-local maxima of a distance transform, which is not a thinning algorithm and does not preserve
-connectivity: on `fan` frame 0 the paint mask has 854 connected components and that test returned
-**1823**, cutting connected bands into pieces, longest run 184 px inside a 3408 px band. Replaced
-with Zhang-Suen thinning, which returns 846 — the mask's own count. `g11710897` goes from **2 lines
+*Recall is done* (2026-08-12). The "centreline" was the local maxima of a distance transform, which
+is not a thinning algorithm and does not preserve connectivity — `fan` frame 0: 854 mask components
+returned as **1823**. Zhang-Suen returns 846, the mask's own count. `g11710897` goes from **2 lines
 a frame to 5**, and two is below `refit.MIN_MATCHED`, so that clip could not be fitted at all
-before and can be now. `fan` gaps 4 % → 2 %, across 1.98 → 1.82. `g15449383` gets worse (3.82 →
-4.47) and scores two markings, so by this file's own rule that is not a verdict either way.
+before. `fan` gaps 4 % → 2 %.
 
-**The precision half has no measured payoff left on the clips that are on disk**
-(`findings/14-has-nothing-left-to-buy-on-these-clips-2026-08-12.md`). Recall is 4 % on `fan` and
-1 % on `broadcast`; `g15449383` scores two markings because only three reach the frame and one of
-those never reaches the grass, which no detector can fix. The clips whose line counts exploded —
-`15449387` at 64 a frame and `15750079` at 1967 — are not ingested any more. Do not work this
-further until a measurement on a clip that exists says it costs something.
+*Precision is the open half, and it is what blocks #11* —
+`findings/11-is-blocked-by-14-2026-08-12.md`. On `fan` frame 8 two of nine detected segments are
+55–60 px from any marking, and both lie along the **join between the grass and the advertising
+hoarding**. Feeding the generator the seven real ones moves the best hypothesis in the pool from
+11.9 m to **3.7 m** and the focal from 28 % wrong to 2.1 %.
 
-One real defect was found there and deliberately not fixed: the turf test's `s > 70` drops the
-**sunlit** half of `g15449383` (the rejected pixels are brighter than the accepted ones, V 126
-against 99, and washed out to S 54). Sweeping it 70 → 15 grows the surface mask from 14 % to ~35 %
-of the image and improves not one measured number, so it is recorded rather than changed.
+Every cheap signal is refuted with numbers: straightness points the *wrong* way on `fan`
+(non-markings are straighter, 0.13 px against 0.20); cross-ratio passes 70 % of impostor quads;
+length is a filter with 39 % leakage and actively *prefers* the hoarding join, which is 567 px long;
+and an inset-from-the-surface-edge test, designed on frame 8, hurts on three of the seven frames it
+was then swept over. Untried and geometric: whether a segment on the grass and one raised above it
+transform differently under the frame-to-frame homography.
 
-**#11 is blocked by #14, measured 2026-08-12** — see `findings/11-is-blocked-by-14-2026-08-12.md`.
-On `fan` frame 8 two of the nine detected segments are 55–60 px from any marking, and one of them
-is 567 px long, so length does not catch it. Feeding the generator the seven real ones moves the
-best hypothesis in the pool from **11.9 m to 3.7 m** and the focal from 28 % wrong to **2.1 %**.
-The gates are not the problem: the solved camera scores 0.0 % unmatched on every frame checked, so
-`max_missing` would have let it through. Do #14's precision half first; the two are one task.
+Also recorded there and deliberately not fixed: the turf test's hardcoded `s > 70` drops the
+**sunlit** half of `g15449383` — the rejected pixels are *brighter* than the accepted ones — and
+sweeping it 70 → 15 improves not one measured number.
 
-**#11 — find the first camera automatically. It now works on one anchor of six**, which is one more
-than the register records. `bootstrap_clip.py fan --frame 0` returns **1.0 px over three probe
-frames on 298 samples**, 3.11 m from the truth with the focal 1.7 % off — a usable automatic seed,
-where the register says 10.7 px on 66 samples. It also reports the half-turn twin, correctly.
+**#11 — find the first camera automatically. It works on one anchor of six**, which is one more
+than the register records: `bootstrap_clip.py fan --frame 0` returns **1.0 px over three probe
+frames on 298 samples**, 3.11 m from the truth with the focal 1.7 % off, and reports the half-turn
+twin correctly. The register's 10.7 px on 66 samples is out of date.
 
-The other five anchors tried — `fan` 40, `broadcast` 0, `g11710897` 0, `g14604660` 0, `g15449383` 0
-— all print *"no plausible camera at all on the anchor frame"*. On `fan` 40 the cause is measured
-and is a defect: the **arc gate rejects the true camera** when the operator has zoomed and no arc is
-in the picture (`arc_n = 0`), so a frame whose pool holds a camera 2.6 m from the truth is thrown
-out whole. That is R-6 broken against the solver — unmeasurable read as failed. Fixing it is the
-next thing to do here.
+The other five print *"no plausible camera at all"*. On `fan` 40 the cause was a defect in the gate
+rather than in the search — the arc test demanded 8+ arc samples and the operator had zoomed until
+no arc was in the picture, so it threw out the **true** camera along with everything else. It now
+abstains where it has no evidence, the same rule `MIN_SUPPORTING_MARKINGS` applies to markings.
 
-Two things the register said that did not survive re-measurement: *"the right answer is in the pool
-4.8 m from the truth"* (it is 11.9 m on `fan` 8, and 2.6–2.8 m on `fan` 0 and 40 — it varies by
-frame), and *"choosing is what fails"* (on `fan` 8 the pool's best is 11.9 m, so no chooser could
-have found it).
+Two register claims did not survive re-measurement: *"the right answer is in the pool 4.8 m from the
+truth"* (11.9 m on `fan` 8, 2.6–2.8 m on `fan` 0 and 40 — it varies by frame) and *"choosing is what
+fails"* (on `fan` 8 the pool's best is 11.9 m, so no chooser could find it).
 
 **#23 — a camera that really travels.** Deferred: no such clip exists yet. The trap is written
 down — a real dolly move and the focal/distance degeneracy look identical in the 3D view, and on a

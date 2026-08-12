@@ -51,6 +51,10 @@ from camlab.solve.bootstrap import hypotheses  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
 from camlab.solve.refit import refit_frame_lm  # noqa: E402
 
+#: Arc samples below which the arc test has no evidence and must abstain. Overridable, because
+#: every measured estimator here ships one.
+MIN_ARC_SAMPLES = 8
+
 
 def plausible(h) -> bool:
     """A football camera: off the pitch, above head height, not at a focal bound."""
@@ -76,6 +80,8 @@ def main() -> None:
                     help="loose absolute coverage floor; NOT relative to the best candidate")
     ap.add_argument("--no-arcs", dest="require_arcs", action="store_false",
                     help="do not require the curved markings to land on paint")
+    ap.add_argument("--min-arc-samples", type=int, default=8,
+                    help="below this many arc samples the arc test abstains rather than rejects")
     ap.add_argument("--max-arc-px", type=float, default=6.0,
                     help="how far the projected centre circle and penalty arc may sit from the "
                          "nearest paint. The true camera on fan frame 8 sits at 1.5 px")
@@ -85,6 +91,8 @@ def main() -> None:
     ap.add_argument("--max-hypotheses", type=int, default=60_000)
     ap.add_argument("--out", default="camera_boot.json")
     args = ap.parse_args()
+    global MIN_ARC_SAMPLES
+    MIN_ARC_SAMPLES = int(args.min_arc_samples)
 
     t0 = time.time()
     info = ClipInfo.load(args.clip)
@@ -143,6 +151,7 @@ def main() -> None:
         return arc_paint_distance(h, tree[i], info.width, info.height)
 
     cands = []
+    arc_seen: dict[str, int] = {}
     for h in hypotheses(seg[a], info.width, info.height, cx, cy,
                         max_hypotheses=args.max_hypotheses):
         if not plausible(h):
@@ -153,10 +162,29 @@ def main() -> None:
         ad, an = arcs(a, r.focal_px, r.rotation, r.position)
         if not (np.isfinite(w) and miss <= args.max_missing):
             continue
-        if args.require_arcs and not (an >= 8 and ad <= args.max_arc_px):
+        # Reject on arc EVIDENCE, never on its absence. The gate used to demand `an >= 8` and threw
+        # out anything with fewer — including a camera that is simply looking at a part of the pitch
+        # with no arc on it. Put the SOLVED camera through it and `fan` frames 40 and 80 are thrown
+        # out: the operator has zoomed to 4499 and 4781 px and no arc is in the picture at all, so
+        # arc_n = 0. That is the whole reason `--frame 40` reported "no plausible camera at all" for
+        # a frame whose pool holds a camera 2.6 m from the truth.
+        #
+        # Same shape as `MIN_SUPPORTING_MARKINGS` in the residual: under the floor the test has no
+        # evidence and abstains, it does not fail. R-6 — mark, never hide — applied to the solver.
+        arc_says = "off paint" if (an >= MIN_ARC_SAMPLES and ad > args.max_arc_px) else (
+            "on paint" if an >= MIN_ARC_SAMPLES else "no arc in frame")
+        arc_seen[arc_says] = arc_seen.get(arc_says, 0) + 1
+        if args.require_arcs and arc_says == "off paint":
             continue
         cands.append((w + (0.0 if not np.isfinite(ad) else ad), n,
                       r.focal_px, r.rotation, r.position))
+    # Said out loud either way: "the arcs were not usable here" and "the arcs agreed" are different
+    # amounts of evidence behind the same result, and the reader cannot tell them apart afterwards.
+    if arc_seen:
+        print("   arcs: " + ", ".join(f"{v} {k}" for k, v in sorted(arc_seen.items())))
+        if arc_seen.get("no arc in frame", 0) and not arc_seen.get("on paint", 0):
+            print("   NO ARC IS IN THIS FRAME — the centre circle and both penalty arcs are out of "
+                  "the picture, so the strongest check on a half-turn twin is unavailable here.")
     if not cands:
         raise SystemExit("no plausible camera at all on the anchor frame")
     # Only a loose ABSOLUTE floor. Coverage was briefly used relative to the best candidate and
