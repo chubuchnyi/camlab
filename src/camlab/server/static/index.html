@@ -412,13 +412,24 @@ async function openClip(id) {
   const med = [0, 1, 2].map((k) => pos.map((p) => p[k]).sort((a, b) => a - b)[pos.length >> 1]);
   const dist = pos.map((p) => Math.hypot(p[0] - med[0], p[1] - med[1], p[2] - med[2]))
     .sort((a, b) => a - b);
+  // "N/N frames solved" is what this said until 2026-08-12 and it measured nothing: `live` is
+  // `focal_px > 0`, so a clip that has never been solved reads 120/120 off its default camera's
+  // focal of 4938.77. An operator read that as a result, and the register's own words for it are
+  // "briefly looked solved". It now says what it counts.
+  const edited = (cam.manual_frames || []).length;
   $("solveinfo").innerHTML =
-    `${live.length}/${cam.focal_px.length} frames solved` +
+    `${live.length}/${cam.focal_px.length} frames <span class="muted">carry a camera</span>` +
     (bad ? `, <span class="warn">${bad} rank-poor</span>` : "") + "<br>" +
     `focal ${Math.min(...live).toFixed(0)}-${Math.max(...live).toFixed(0)} px<br>` +
+    // The spread includes any hand edit, because this panel reads the solve WITH the manual layer
+    // over it — one edited frame reported 7.3 m of "centre offset" that was entirely the
+    // operator's own move, and read as a defect in the solve.
     `centre offset: median ${dist[dist.length >> 1].toFixed(1)} m, ` +
-    `max ${dist[dist.length - 1].toFixed(1)} m<br>` +
-    `<span class="muted">one camera would read 0.0 m for both</span>`;
+    `max ${dist[dist.length - 1].toFixed(1)} m` +
+    (edited ? ` <span class="warn">(includes ${edited} hand-edited frame${edited > 1 ? "s" : ""})</span>` : "")
+    + "<br>" +
+    `<span class="muted">one camera would read 0.0 m for both · whether it is RIGHT is the` +
+    ` worst-line number under the frame, not this</span>`;
 
   buildStrip(cam);
   $("stat").textContent = "";

@@ -61,7 +61,9 @@ REPO = SCRIPTS.parent
 #: are the thing that has been measured, and a second import-shaped path through the same logic is
 #: how two versions of "the pipeline" start to disagree.
 STAGES = [
-    ("carry", "solve_carry.py", ["--no-hand", "--free-position", "--out", "camera_carry.json"]),
+    # NOT `--no-hand`. It was hardcoded here, so the viewer's "solve this clip" button threw away
+    # the operator's own anchor on every run — the one input the chain most depends on.
+    ("carry", "solve_carry.py", ["--free-position", "--out", "camera_carry.json"]),
     ("self-heal", "solve_selfheal.py", ["--from", "camera_carry.json",
                                         "--out", "camera_healed.json"]),
     ("shared centre", "solve_shared_centre.py", ["--from", "camera_healed.json",

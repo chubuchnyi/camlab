@@ -39,6 +39,19 @@ Ordered by how much they cost.
   algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
   Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
   below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
+- **The solver never read the viewer's hand edits.** Every edit the panel writes goes to the run's
+  `camera_manual.json`; `solve_carry.py` read `calib/<clip>-hand-aligned-*.json`; and
+  `solve/pipeline.py` passed `--no-hand` unconditionally, so the "solve this clip" button threw the
+  operator's anchor away on every run and said nothing. Two stores that did not know about each
+  other. Cost on `CRO_MOR_194948` frame 0: **24.17 px on 2 markings** from the untouched default
+  against **3.67 px on 10** from the operator's pose, with `anchors_hand_aligned: []` and
+  `rotation[0]` bit-identical to the shipped default in the output.
+- **"N/N frames solved" in the viewer counted `focal_px > 0`.** A clip that has never been solved
+  reads 120/120 off its default camera's focal of 4938.77. An operator read it as a result. Whether
+  a camera is RIGHT is the worst-line number, never a frame count.
+- **The anchor refit was position-locked while the rest of the chain was free.** `solve_carry.py`
+  passed `free_position` to the per-frame refit and not to the anchor one — the single frame the
+  whole chain hangs off. 7.06 px locked against 3.67 px free.
 - **The arc gate rejects the TRUE camera on a zoomed frame.** `bootstrap_clip.py` demands 8+ arc
   samples on paint, and on `fan` 40 and 80 the operator has zoomed to 4499 and 4781 px so no arc is
   in the picture at all — the solved camera scores `arc_n = 0` and is thrown out. "Cannot be

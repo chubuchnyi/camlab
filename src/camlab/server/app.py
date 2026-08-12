@@ -515,6 +515,101 @@ def flip(clip_id: str, which: str = "camera_auto.json") -> dict:
     return {"ok": True, "flipped_frames": len(cam["frames"]), "which": which}
 
 
+@app.post("/api/run/{clip_id}/refine/{n}")
+def refine(clip_id: str, n: int, body: dict) -> dict:
+    """Take the camera the human has roughly aimed at this frame and let the solver finish it.
+
+    The division of labour the viewer was missing. A human is good at the thing the solver is bad
+    at — knowing which painted line is which — and bad at the thing the solver is good at, which is
+    the last two pixels. Measured over eight hand-aligned frames: a rough seed sits at 34.7 px, a
+    careful human at 5.1, and `refit_frame_lm` from that seed at **2.0**.
+
+    It refuses rather than damages. `refit._accept` takes the new camera only if the worst offset
+    fell AND no correspondence was lost — a camera can always lower its error by pushing a marking
+    out of frame — so a hand alignment that is already better than the fit survives untouched, and
+    the reply says so.
+
+    Writes through `camera_manual.json` exactly as a typed number does. What the algorithm said and
+    what the human corrected stay separable even when the correction came from the algorithm.
+    """
+    import json
+
+    import cv2
+
+    from camlab.solve.refit import refit_frame_lm
+
+    info = ClipInfo.load(clip_id)
+    which = str(body.get("which", "camera_auto.json"))
+    cam = _load_camera(info, which)
+    if not (0 <= n < len(cam["frames"])):
+        raise HTTPException(404, f"frame {n} outside the clip")
+    if not (cam["focal_px"][n] > 0):
+        raise HTTPException(400, f"frame {n} has no camera to refine — aim one first")
+
+    bgr = cv2.imread(str(info.frame_path(n)))
+    if bgr is None:
+        raise HTTPException(404, f"{clip_id} frame {n} not decoded")
+    dist, surface = paint_masks(bgr)
+    segs = detect_segments(dist, surface, method=str(body.get("method", "hough")))
+    if len(segs) < 4:
+        raise HTTPException(
+            400, f"only {len(segs)} lines found on frame {n}; four is the floor for a fit")
+
+    cx, cy = float(cam["cx"]), float(cam["cy"])
+    before = frame_residual(info.frame_path(n), cam["focal_px"][n], cam["rotation"][n],
+                            cam["position"][n], frame=n, cx=cx, cy=cy)
+    r = refit_frame_lm(segs, cam["focal_px"][n], cam["rotation"][n], cam["position"][n],
+                       info.width, info.height, cx, cy, frame=n)
+    after = frame_residual(info.frame_path(n), r.focal_px, r.rotation, r.position,
+                           frame=n, cx=cx, cy=cy)
+
+    d_pos = float(np.linalg.norm(np.asarray(r.position) - np.asarray(cam["position"][n])))
+    d_rot = float(np.linalg.norm(np.asarray(r.rotation) - np.asarray(cam["rotation"][n])))
+    # Thresholds a human could see, not float noise. At machine epsilon a converged fit still
+    # reports "moved" on every press, so the button never says "this is already as good as these
+    # lines allow" — which is the one answer that tells an operator to stop pressing it.
+    # 1 mm, 1e-5 rad (0.0006 deg) and half a pixel of focal are all far below what the overlay
+    # shows at 70 m.
+    moved = (abs(r.focal_px - cam["focal_px"][n]) > 0.5 or d_pos > 1e-3 or d_rot > 1e-5)
+    if moved:
+        path = info.dir / "camera_manual.json"
+        blob = json.loads(path.read_text()) if path.exists() else {}
+        blob.setdefault(which, {})[str(n)] = {
+            "focal_px": float(r.focal_px),
+            "rotation": [float(v) for v in np.asarray(r.rotation).ravel()],
+            "position": [float(v) for v in np.asarray(r.position).ravel()],
+        }
+        path.write_text(json.dumps(blob, indent=1))
+
+    yaw, elev, roll = angles_from_rotation(matrix_from_rodrigues(np.asarray(r.rotation, float)))
+    # "Nothing to fit to" and "already the best fit" are the same `moved: false` and completely
+    # different things to tell an operator. With fewer than MIN_MATCHED correspondences the
+    # residual is a constant, the optimiser has no gradient at all, and it returns the seed — the
+    # aim has to come closer by hand before the solver can do anything with it. Measured: a rough
+    # aim on fan frame 0 that scores 16.94 px matched ZERO of the 7 detected lines.
+    from camlab.solve.refit import MIN_MATCHED
+
+    return {
+        "frame": n, "which": which, "moved": moved,
+        "matched": int(r.n_before) >= MIN_MATCHED,
+        "min_matched": int(MIN_MATCHED),
+        "lines": int(len(segs)),
+        # Both the solver's own number (worst matched offset, which is what it minimises) and the
+        # paint's (which is what the panel shows), because they are different questions and the
+        # register says to report the one that judges, not only the one that was optimised.
+        "offset_before": None if not np.isfinite(r.before) else round(float(r.before), 2),
+        "offset_after": None if not np.isfinite(r.after) else round(float(r.after), 2),
+        "matched_before": int(r.n_before), "matched_after": int(r.n_after),
+        "worst_line_before": None if not np.isfinite(before.worst_line_px)
+                             else round(float(before.worst_line_px), 2),
+        "worst_line_after": None if not np.isfinite(after.worst_line_px)
+                            else round(float(after.worst_line_px), 2),
+        "moved_m": round(float(r.moved_m), 3), "d_focal": round(float(r.d_focal), 1),
+        "focal_px": float(r.focal_px), "x": float(r.position[0]), "y": float(r.position[1]),
+        "z": float(r.position[2]), "yaw": float(yaw), "elev": float(elev), "roll": float(roll),
+    }
+
+
 @app.post("/api/run/{clip_id}/manual/{n}")
 def manual_set(clip_id: str, n: int, body: dict) -> dict:
     """Apply a hand edit. The client sends SCALARS; the camera is derived here.

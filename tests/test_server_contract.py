@@ -529,3 +529,31 @@ def test_the_pipeline_finds_its_scripts_without_counting_parent_directories():
             os.environ.pop("CAMLAB_SCRIPTS", None)
         else:
             os.environ["CAMLAB_SCRIPTS"] = old
+
+
+def test_refine_refuses_a_frame_with_no_camera_rather_than_fitting_noise():
+    """The auto-fit button is a REFINEMENT of an aim, not a solver. Handed a frame the solve could
+    not use — `focal_px == 0`, kept and marked rather than dropped (R-6) — it has nothing to start
+    from, and starting from a default would silently answer a question nobody asked."""
+    runs = [r["clip_id"] for r in client.get("/api/runs").json()]
+    if not runs:
+        pytest.skip("no ingested clip in this checkout")
+    clip = runs[0]
+    cam = client.get(f"/api/run/{clip}/camera").json()
+    dead = [i for i, f in enumerate(cam["focal_px"]) if not f > 0]
+    if not dead:
+        pytest.skip(f"{clip} has no frame without a camera")
+    r = client.post(f"/api/run/{clip}/refine/{dead[0]}", json={"which": cam["which"]})
+    assert r.status_code == 400
+    assert "aim one first" in r.json()["detail"]
+
+
+def test_refine_is_out_of_range_safe():
+    runs = [r["clip_id"] for r in client.get("/api/runs").json()]
+    if not runs:
+        pytest.skip("no ingested clip in this checkout")
+    clip = runs[0]
+    cam = client.get(f"/api/run/{clip}/camera").json()
+    past_end = len(cam["frames"]) + 5
+    r = client.post(f"/api/run/{clip}/refine/{past_end}", json={"which": cam["which"]})
+    assert r.status_code == 404

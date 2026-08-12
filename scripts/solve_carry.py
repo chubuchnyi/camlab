@@ -36,6 +36,7 @@ from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
 from camlab.measure.residual import frame_residual  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
+from camlab.solve.hand import hand_anchors  # noqa: E402
 from camlab.solve.refit import refit_frame, refit_frame_lm  # noqa: E402
 
 
@@ -64,18 +65,35 @@ def main() -> None:
     cx, cy = float(seed["cx"]), float(seed["cy"])
     n = len(seed["frames"])
 
-    hand_path = next((Path(__file__).resolve().parent.parent / "calib")
-                     .glob(f"{args.clip}-hand-aligned-*.json"), None)
-    hand = json.loads(hand_path.read_text()).get(args.seed, {}) if hand_path else {}
+    # THE RUN'S OWN `camera_manual.json` FIRST. That is where the viewer writes every hand edit —
+    # typed number, gizmo drag, keyboard nudge, auto-fit — keyed by the solve it overlays, which is
+    # exactly this seed. Until 2026-08-12 no solver read it at all: an operator would aim frame 0
+    # by eye, press solve, and the chain would silently refit from the untouched default. Measured
+    # on `CRO_MOR_194948` frame 0, what that cost — worst line **24.17 px on 2 markings** from the
+    # default pose against **3.67 px on 10** from the operator's, and `camera_carry.json` came out
+    # with `anchors_hand_aligned: []` and `rotation[0]` bit-identical to the shipped default.
+    #
+    # `calib/<clip>-hand-aligned-*.json` is the older store and is still read, second, so the
+    # `fan` anchors recorded there keep working. Two stores that do not know about each other is
+    # how this happened; the run's own file is the one to write to.
+    hand, hand_where = hand_anchors(
+        info.dir, args.seed,
+        calib_dir=Path(__file__).resolve().parent.parent / "calib", clip_id=args.clip)
     if args.no_hand:
-        hand = {}
+        hand, hand_where = {}, None
     anchors = sorted({int(a) for a in str(args.anchor).split(",") if a.strip() != ""})
     if not anchors or anchors[0] < 0 or anchors[-1] >= n:
         raise SystemExit(f"anchors {anchors} must all be within 0..{n - 1}")
     by_hand = [a for a in anchors if str(a) in hand]
 
     print(f"== {args.clip}: {n} frames, anchors {anchors} "
-          f"({len(by_hand)} hand-aligned: {by_hand}), K = ({cx:.0f}, {cy:.0f})")
+          f"({len(by_hand)} hand-aligned: {by_hand}"
+          f"{'' if hand_where is None else ' from ' + hand_where}), K = ({cx:.0f}, {cy:.0f})")
+    # Said out loud, because "the anchor you aimed was ignored" is invisible in the result: the
+    # chain still reports 120 of 120 frames and a plausible focal range.
+    if not by_hand:
+        print("   NO HAND ANCHOR — every anchor is being refitted from the seed's own pose. "
+              "If you aimed one in the viewer, it is not being used.")
 
     pairs = measure_pairs({f: info.frame_path(f) for f in range(n)}, gaps=(1,))
     h_of = {(p.i, p.j): p for p in pairs}
@@ -106,7 +124,11 @@ def main() -> None:
             focal[a], rot[a], pos[a] = e["focal_px"], np.asarray(e["rotation"], float), \
                 np.asarray(e["position"], float)
         else:
-            r = fit(segs(a), focal[a], rot[a], pos[a], info.width, info.height, cx, cy)
+            # `free_position` too. It was missing here while the per-frame refit below had it, so
+            # the one frame the whole chain hangs off was fitted with its position nailed down.
+            # Measured on `CRO_MOR_194948` frame 0: 7.06 px locked against 3.67 px free.
+            r = fit(segs(a), focal[a], rot[a], pos[a], info.width, info.height, cx, cy,
+                    free_position=args.free_position)
             focal[a], rot[a], pos[a] = r.focal_px, r.rotation, r.position
         drift[a] = 0
 
