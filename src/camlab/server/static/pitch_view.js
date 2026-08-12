@@ -93,6 +93,12 @@ export function createPitchView(cfg) {
   scene.add(gizmoHelper);
   let dragging = false;
   let shownIndex = 0;
+  // The distance the frame plane was sized at when the hand took hold, held for the whole gesture.
+  // It is derived from where the optical axis meets the grass, so recomputing it mid-drag rescales
+  // the plane on every mouse move and then snaps it back on release — the picture appears to zoom
+  // while being aimed, which is the one thing it must not do when it is the thing being aimed AT.
+  // Frozen, the plane travels with the camera as one rigid body.
+  let dragPlaneD = null;
   // Aiming a 70 m shot is a tenth-of-a-degree job: at a 3000 px focal, 0.1 deg is about 5 px on
   // the overlay, which is what the eye is being asked to judge. Stock speed moves whole degrees in
   // a short drag and overshoots every time. Alt goes finer again, matching the keyboard's alt.
@@ -106,8 +112,14 @@ export function createPitchView(cfg) {
     // spins around it, which is unusable and looks like a bug in the gizmo.
     orbit.enabled = !e.value;
     dragging = e.value;
-    if (e.value) return;
-    // Back to the solve's own colour and the server's own overlay; the hand has let go.
+    if (e.value) {
+      // Taken BEFORE the first move, and from the solve rather than the proxy, so it is the size
+      // the plane is already being seen at.
+      dragPlaneD = planeDistanceFor(shownIndex);
+      return;
+    }
+    // Back to the solve's own colour, its own plane distance and the server's own overlay.
+    dragPlaneD = null;
     drawCamera(shownIndex);
     drawFramePlane(shownIndex);
     if (cfg.onDragEnd) cfg.onDragEnd(proxyState());
@@ -269,6 +281,7 @@ export function createPitchView(cfg) {
   /** The distance actually used: the manual override, else the ground intersection, else a
    *  fallback so a degenerate frame still draws something rather than vanishing. */
   function planeDistanceFor(i, pose) {
+    if (dragPlaneD != null) return dragPlaneD;
     if (planeOverride != null) return planeOverride;
     const g = groundDistance(i, pose);
     return Number.isFinite(g) ? Math.min(Math.max(g, 2), 400) : 40;
