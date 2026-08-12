@@ -334,3 +334,29 @@ def test_the_scrubber_does_not_colour_frames_by_a_stale_flag():
     build = re.search(r"function buildStrip[\s\S]*?\n\}", page).group(0)
     assert "cam.degenerate" not in build, "the strip must not colour by the seed's degenerate flag"
     assert "#strip i.bad" not in css, "and the colour it used must be gone with it"
+
+
+def test_the_camera_can_be_dragged_and_it_writes_through_the_normal_edit_path():
+    """The last piece of #7. Two things it must not do.
+
+    It must not attach the gizmo to the camera BODY: `drawCamera` clears and rebuilds that on every
+    frame, and three.js does not complain when a gizmo ends up attached to a deleted object — it
+    just stops working. And it must not invent a second write path: a drag goes through the same
+    manual endpoint a typed number does, or the two eventually disagree about what the camera is.
+    """
+    view = (STATIC / "pitch_view.js").read_text()
+    page = (STATIC / "index.html").read_text()
+
+    assert "TransformControls" in view and "dragProxy" in view
+    assert "gizmo.attach(dragProxy)" in view, "attach to the proxy, never to the rebuilt body"
+    assert "getHelper()" in view, (
+        "three r170's TransformControls is a Controls, not an Object3D; adding it to the scene is "
+        "a silent no-op"
+    )
+    assert "dragging-changed" in view and "orbit.enabled" in view, (
+        "orbit and drag both claim the pointer and must not both act"
+    )
+
+    assert 'id="e-drag"' in page and "setDragMode" in page
+    drag = re.search(r"onDragEnd:[\s\S]*?\},", page).group(0)
+    assert "pushManual()" in drag, "a drag must be written by the same path a typed number is"

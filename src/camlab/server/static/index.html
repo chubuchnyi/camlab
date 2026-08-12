@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=18" />
+  <link rel="stylesheet" href="/static/style.css?v=19" />
 </head>
 <body>
 
@@ -178,6 +178,12 @@
            rotated camera scores bit for bit the same, 2.1 px on 307 samples either way. So the
            markings cannot say which half is being looked at, and no solver ever will. One click,
            and it applies to the whole clip because the answer is the same on every frame. -->
+      <!-- Position by hand in the 3D view. Only the position: aim stays on the numbers, because a
+           rotation gizmo lets a hand produce something that is not a rotation, and "this is one
+           camera" would stop being a guarantee. -->
+      <label title="drag the camera in the 3D view; its aim stays on the numbers">
+        <input type="checkbox" id="e-drag" /> move the camera by hand
+      </label>
       <button id="e-flip" title="the markings fit both ways — this is the other one">
         flip 180° (whole clip)
       </button>
@@ -214,7 +220,7 @@
 </div>
 
 <script type="module">
-import { createPitchView } from "/static/pitch_view.js?v=15";
+import { createPitchView } from "/static/pitch_view.js?v=16";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -222,6 +228,15 @@ const err = (m) => { $("err").textContent = m || ""; };
 const view = createPitchView({
   mount: $("view"),
   mountB: $("bcanvas"),
+  // A drag reports where the camera was let go, and it is written through the SAME manual path a
+  // typed number takes — so it lands in camera_manual.json, is reset by the same buttons, and the
+  // fields update to match. A second write path would be a second place for the two to disagree.
+  onDragEnd: async ([x, y, z]) => {
+    $("e-x").value = x.toFixed(2);
+    $("e-y").value = y.toFixed(2);
+    $("e-z").value = z.toFixed(2);
+    await pushManual();
+  },
   onCamera: (c) => {
     const d = (v, u, n = 2) => (c.live && Number.isFinite(v) ? `${v.toFixed(n)}${u}` : "—");
     // The editable fields are filled from the SERVER's angles, not from the viewer's own, so
@@ -244,10 +259,11 @@ const view = createPitchView({
         ? "on the pitch, where this camera is looking"
         : "axis misses the pitch — fell back to 40 m";
     }
-    $("c-flag").className = c.degenerate ? "flag bad" : (c.live ? "flag ok" : "flag none");
-    $("c-flag").textContent = c.degenerate
-      ? "rank-poor homography — kept and marked, not trusted"
-      : (c.live ? "" : "no camera for this frame");
+    // `degenerate` is not consulted here either, for the reason given in `buildStrip`: it belongs
+    // to the original per-frame solve and every camera since copies the list through from its
+    // seed, so it kept flagging frames the chain had long since fixed.
+    $("c-flag").className = c.live ? "flag ok" : "flag none";
+    $("c-flag").textContent = c.live ? "" : "no camera for this frame";
     $("bframe").src = c.frame_url;
     if ($("T-paint").checked && view.clip) {
       $("bpaint").src = `/api/run/${view.clip.clip_id}/paint/${c.frame}.png`;
@@ -333,7 +349,7 @@ async function openClip(id) {
   $("bstage").style.aspectRatio = `${clip.width} / ${clip.height}`;
 
   const live = cam.focal_px.filter((f) => f > 0);
-  const bad = (cam.degenerate || []).filter(Boolean).length;
+  const bad = 0;   // see buildStrip: the seed's `degenerate` flag outlives the solve it describes
   const pos = cam.position.filter((_, i) => cam.focal_px[i] > 0);
   const med = [0, 1, 2].map((k) => pos.map((p) => p[k]).sort((a, b) => a - b)[pos.length >> 1]);
   const dist = pos.map((p) => Math.hypot(p[0] - med[0], p[1] - med[1], p[2] - med[2]))
@@ -669,6 +685,13 @@ $("s-go").onclick = async () => {
     $("s-go").disabled = false;
     $("s-note").textContent = "";
   }
+};
+
+$("e-drag").onchange = (e) => {
+  view.setDragMode(e.target.checked);
+  err(e.target.checked
+    ? "drag the arrows to move the camera; let go and it is written as a hand edit"
+    : "");
 };
 
 $("e-flip").onclick = async () => {

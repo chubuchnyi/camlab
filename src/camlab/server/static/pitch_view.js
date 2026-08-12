@@ -19,6 +19,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 
 const TURF = 0x2f5d33;
 const PAINT = 0xffffff;
@@ -67,6 +68,37 @@ export function createPitchView(cfg) {
   const view = new THREE.PerspectiveCamera(45, 1, 0.1, 4000);
   view.up.set(0, 0, 1);
   const orbit = new OrbitControls(view, renderer.domElement);
+
+  // Dragging the camera in the world, rather than typing three numbers at it. The gizmo is
+  // attached to a PROXY rather than to the camera body, because `drawCamera` clears and rebuilds
+  // that body on every frame — a gizmo attached to it would be detached from a deleted object one
+  // scrub later, and three.js does not complain about that, it just stops working.
+  //
+  // The proxy carries the position only. Aim stays on the numbers: a rotation gizmo would let a
+  // hand produce something that is not a rotation, and "this is one camera" would stop being a
+  // guarantee (the same reason the browser never posts a matrix — see server/app.py).
+  const dragProxy = new THREE.Object3D();
+  const gizmo = new TransformControls(view, renderer.domElement);
+  gizmo.setMode("translate");
+  gizmo.setSpace("world");
+  gizmo.enabled = false;
+  gizmo.attach(dragProxy);
+  scene.add(dragProxy);
+  // three r170: TransformControls is a Controls, not an Object3D. Adding it to the scene is
+  // silently a no-op — nothing draws and nothing errors — and `getHelper()` is what goes in.
+  const gizmoHelper = gizmo.getHelper();
+  gizmoHelper.visible = false;
+  scene.add(gizmoHelper);
+  let dragging = false;
+  gizmo.addEventListener("dragging-changed", (e) => {
+    // Orbit and drag both claim the pointer. Without this the camera slides while the whole view
+    // spins around it, which is unusable and looks like a bug in the gizmo.
+    orbit.enabled = !e.value;
+    dragging = e.value;
+    if (!e.value && cfg.onDragEnd) {
+      cfg.onDragEnd([dragProxy.position.x, dragProxy.position.y, dragProxy.position.z]);
+    }
+  });
   orbit.target.set(0, 0, 0);
   orbit.maxPolarAngle = Math.PI * 0.495;   // never orbit under the pitch: from below the markings
   orbit.screenSpacePanning = false;        // mirror and read as a plausible different camera
@@ -488,6 +520,8 @@ export function createPitchView(cfg) {
     });
     drawCamera(i);
     drawFramePlane(i);
+    // Follow the camera unless a hand is on the gizmo, in which case the hand wins until it lets go.
+    if (!dragging) dragProxy.position.copy(solved.position);
     const live = cam.focal_px[i] > 0;
     // The camera has SEVEN independent degrees of freedom — position (3), orientation (3), focal
     // (1) — and the panel used to show five numbers, of which one was derived. The three angles
@@ -537,8 +571,17 @@ export function createPitchView(cfg) {
     return planeDistanceFor(i);
   }
 
+  /** Turn the drag gizmo on or off. Off by default: a gizmo sitting in the view is a thing to
+      catch with the mouse while orbiting, and most of the time the camera is not being moved. */
+  function setDragMode(on) {
+    gizmo.enabled = !!on;
+    gizmoHelper.visible = !!on;
+    if (on) dragProxy.position.copy(solved.position);
+  }
+
   return {
     initPitch, loadRun, show, setLayer, setPlaneDistance, groundDistance, frameAll, fly, resize,
+    setDragMode,
     resetView: frameAll,
     get clip() { return clip; },
     get cam() { return cam; },
