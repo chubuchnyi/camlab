@@ -162,19 +162,26 @@ def main() -> None:
         ad, an = arcs(a, r.focal_px, r.rotation, r.position)
         if not (np.isfinite(w) and miss <= args.max_missing):
             continue
-        # Reject on arc EVIDENCE, never on its absence. The gate used to demand `an >= 8` and threw
-        # out anything with fewer — including a camera that is simply looking at a part of the pitch
-        # with no arc on it. Put the SOLVED camera through it and `fan` frames 40 and 80 are thrown
-        # out: the operator has zoomed to 4499 and 4781 px and no arc is in the picture at all, so
-        # arc_n = 0. That is the whole reason `--frame 40` reported "no plausible camera at all" for
-        # a frame whose pool holds a camera 2.6 m from the truth.
+        # The arc test STAYS STRICT, and that was measured rather than assumed.
         #
-        # Same shape as `MIN_SUPPORTING_MARKINGS` in the residual: under the floor the test has no
-        # evidence and abstains, it does not fail. R-6 — mark, never hide — applied to the solver.
-        arc_says = "off paint" if (an >= MIN_ARC_SAMPLES and ad > args.max_arc_px) else (
-            "on paint" if an >= MIN_ARC_SAMPLES else "no arc in frame")
+        # It has a real defect: put the solved camera through it and `fan` 40 and 80 are thrown out,
+        # because the operator has zoomed until no arc is in the picture and `arc_n = 0` reads as a
+        # failure rather than as no evidence. Letting it abstain there — the rule
+        # `MIN_SUPPORTING_MARKINGS` applies to markings — was tried on 2026-08-12 over six anchors
+        # and made things WORSE, so it is not the fix:
+        #
+        #   fan 0   1.0 px / 3.11 m  ->  1.2 px / 3.26 m       diluted
+        #   fan 40  no answer        ->  no answer             (dies at the miss gate, not here)
+        #   fan 80  no answer        ->  an answer 198.9 m out, focal +36 %, reported at 9.9 px
+        #   g14604660  no answer     ->  an answer at focal 910, pinned to the 900 px floor
+        #
+        # Two confident wrong answers where there had been none. "No camera" is a usable result and
+        # a wrong one that reports 9.9 px is not — R-6 the other way round. What the gate rejects
+        # off-frame is largely cameras pointing at the wrong world, and that work is load-bearing.
+        arc_says = ("on paint" if (an >= MIN_ARC_SAMPLES and ad <= args.max_arc_px)
+                    else "off paint" if an >= MIN_ARC_SAMPLES else "no arc in frame")
         arc_seen[arc_says] = arc_seen.get(arc_says, 0) + 1
-        if args.require_arcs and arc_says == "off paint":
+        if args.require_arcs and arc_says != "on paint":
             continue
         cands.append((w + (0.0 if not np.isfinite(ad) else ad), n,
                       r.focal_px, r.rotation, r.position))
