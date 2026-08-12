@@ -36,6 +36,15 @@ Ordered by how much they cost.
   the frames where the camera was worst, no marking kept enough samples to score and the readout
   went *blank*. A human with a ruler on the overlay read larger than the headline on every frame he
   tried. He was measuring exactly what was being thrown away. (`the-metric-had-a-ceiling.md`)
+- **A pipeline stage that copies `cx, cy` from its input propagates a wrong K forever.** All four
+  stages read `cx, cy = float(src["cx"]), float(src["cy"])` and none compared them to the clip's
+  own optical axis, so every shipped fan camera carried the image centre on a clip cropped 638 px
+  off it. `write_camera` now records `principal_point_offset_px`. Measured cost: 0.88 m of camera
+  position on a 70 m shot, and 1.6 % of focal — small, and it had to be measured to know that.
+- **`write_camera` validated nothing until 2026-08-12.** `runs/fan/camera_ptz.json` holds fourteen
+  frames with a focal of **0.0**, which is not a degenerate camera but not a camera. The crash it
+  caused downstream was fixed in `frame_residual` months later; the thing that wrote it was not
+  touched. Found by a reviewer reading the files rather than the code.
 - **A per-marking MEDIAN cannot be checked with a ruler.** A ruler lands where a line is furthest
   out; the median lands in the middle. Frame 30: worst line 56 px, worst spot 82 px. Report both or
   the human is right and the number is wrong every time.

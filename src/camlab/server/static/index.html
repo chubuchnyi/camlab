@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=21" />
+  <link rel="stylesheet" href="/static/style.css?v=23" />
 </head>
 <body>
 
@@ -73,65 +73,21 @@
 
   <div class="split" id="split-p" title="drag to resize"></div>
   <aside id="panel">
-    <!-- One bar for every long job. Determinate when the job reports steps (the solve does),
-         indeterminate when it cannot (an upload's bytes are the browser's, not ours). -->
-    <div id="busy" hidden>
+<div id="busy" hidden>
       <div id="busylabel"></div>
       <div id="busytrack"><div id="busyfill"></div></div>
     </div>
-    <h2>Clip</h2>
-    <select id="clip"></select>
-    <!-- Upload, so a clip nobody has tuned anything for can be tried. Every number in this repo
-         was measured on two clips that arrived with a camera already fitted elsewhere, and a
-         method that only works on the clips it was built against is not a method. -->
-    <div id="uptools">
-      <label class="row">video
-        <input type="file" id="u-file" accept="video/*" />
-      </label>
-      <label class="row">name
-        <input class="ed" id="u-name" type="text" placeholder="from the filename" />
-      </label>
-      <label class="row">frames
-        <input class="ed" id="u-frames" type="number" min="1" max="600" step="10" value="60" />
-        from
-        <input class="ed" id="u-first" type="number" min="0" step="10" value="0" />
-      </label>
-      <button id="u-go">upload and decode</button>
-      <div class="small muted" id="u-note">decoding is synchronous — sixty frames takes a few seconds</div>
-    </div>
-    <h2>Camera</h2>
-    <select id="camsel"></select>
-    <!-- The whole chain, from the browser. It exists because "upload a clip" stopped one step
-         short of useful: the frames decoded and there was no way to get a camera without a shell.
-         Anchor on a frame you have aligned by eye if you have one — measured at about sixty
-         frames' worth, and the difference between 2.11 px and 7.75 px on the fan clip. -->
-    <div id="slvtools">
-      <label class="row">anchor frame
-        <input class="ed" id="s-anchor" type="number" min="0" step="1" value="0" />
-      </label>
-      <button id="s-go">solve this clip</button>
-      <div class="small muted" id="s-note">carry &rarr; self-heal &rarr; shared centre &rarr; smooth</div>
-    </div>
+    <!-- Three tabs, because the panel had eight sections in one column and the camera numbers —
+         the thing being worked on — sat below the fold behind the layer toggles. Which tab is
+         open is remembered, so scrubbing a clip does not send you back to the top. -->
+    <nav id="tabs" role="tablist">
+      <button class="tab" data-tab="t-camera" role="tab">camera</button>
+      <button class="tab" data-tab="t-clip"   role="tab">clip</button>
+      <button class="tab" data-tab="t-view"   role="tab">view</button>
+    </nav>
 
-    <h2>Layers</h2>
-    <label><input type="checkbox" id="L-turf"       checked /> turf</label>
-    <label><input type="checkbox" id="L-markings"   checked /> markings</label>
-    <label><input type="checkbox" id="L-goals"      checked /> goals + flags</label>
-    <label><input type="checkbox" id="L-camera"     checked /> camera + frustum</label>
-    <label><input type="checkbox" id="L-trajectory" checked /> trajectory</label>
-    <label><input type="checkbox" id="L-frameplane" checked /> frame plane</label>
-    <label class="off"><input type="checkbox" disabled /> players <span class="soon">M4</span></label>
-    <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
-
-    <h2>Frame plane</h2>
-    <label><input type="checkbox" id="planeauto" checked /> auto: where the axis meets the pitch</label>
-    <label class="row">distance
-      <input type="range" id="planed" min="5" max="200" step="1" value="78" />
-      <span class="num" id="planedv">—</span>
-    </label>
-    <div class="small muted" id="planenote"></div>
-
-    <h2>Camera <span class="muted small" id="model"></span></h2>
+    <section id="t-camera" class="tab-pane" role="tabpanel">
+<h2>Camera <span class="muted small" id="model"></span></h2>
     <table id="cam">
       <tr class="grp"><td colspan="2">position <span class="muted" id="c-edited"></span></td></tr>
       <tr><th>X</th><td><input class="ed" id="e-x" type="number" step="0.5" /></td></tr>
@@ -159,7 +115,9 @@
       <tr class="drv"><th>scored</th><td class="num" id="c-residn">—</td></tr>
       <tr class="drv"><th>no paint</th><td class="num" id="c-residun">—</td></tr>
     </table>
-    <p class="small muted">
+    <details class="note">
+      <summary>what these seven numbers are</summary>
+      <p class="small muted">
       7 free parameters: position, orientation, focal.
       <span class="drvkey">grey</span> = derived, not solved.
       Principal point is a <b>parameter of each camera file</b>, not a constant: this clip is
@@ -167,7 +125,8 @@
       solves in <code>runs/fan</code> were nonetheless fitted at the image centre. A camera is only
       valid under its own — scoring one against another's is measuring a camera nobody solved.
       No distortion term, and measurement says one is not needed: real markings bow 0.37 px.
-    </p>
+      </p>
+    </details>
     <div id="c-flag"></div>
     <div id="edtools">
       <label title="a position edit applies to the whole clip; orientation and focal are per frame">
@@ -213,17 +172,71 @@
         rewritten — what the algorithm said and what you corrected stay separable.
       </p>
     </div>
+    </section>
 
-    <h2>Solve</h2>
+    <section id="t-clip" class="tab-pane" role="tabpanel">
+<h2>Clip</h2>
+    <select id="clip"></select>
+    <!-- Upload, so a clip nobody has tuned anything for can be tried. Every number in this repo
+         was measured on two clips that arrived with a camera already fitted elsewhere, and a
+         method that only works on the clips it was built against is not a method. -->
+    <div id="uptools">
+      <label class="row">video
+        <input type="file" id="u-file" accept="video/*" />
+      </label>
+      <label class="row">name
+        <input class="ed" id="u-name" type="text" placeholder="from the filename" />
+      </label>
+      <label class="row">frames
+        <input class="ed" id="u-frames" type="number" min="1" max="600" step="10" value="60" />
+        from
+        <input class="ed" id="u-first" type="number" min="0" step="10" value="0" />
+      </label>
+      <button id="u-go">upload and decode</button>
+      <div class="small muted" id="u-note">decoding is synchronous — sixty frames takes a few seconds</div>
+    </div>
+<h2>Camera</h2>
+    <select id="camsel"></select>
+    <!-- The whole chain, from the browser. It exists because "upload a clip" stopped one step
+         short of useful: the frames decoded and there was no way to get a camera without a shell.
+         Anchor on a frame you have aligned by eye if you have one — measured at about sixty
+         frames' worth, and the difference between 2.11 px and 7.75 px on the fan clip. -->
+    <div id="slvtools">
+      <label class="row">anchor frame
+        <input class="ed" id="s-anchor" type="number" min="0" step="1" value="0" />
+      </label>
+      <button id="s-go">solve this clip</button>
+      <div class="small muted" id="s-note">carry &rarr; self-heal &rarr; shared centre &rarr; smooth</div>
+    </div>
+<h2>Solve</h2>
     <div class="small muted" id="solveinfo">—</div>
+    </section>
 
-    <h2>View</h2>
+    <section id="t-view" class="tab-pane" role="tabpanel">
+<h2>Layers</h2>
+    <label><input type="checkbox" id="L-turf"       checked /> turf</label>
+    <label><input type="checkbox" id="L-markings"   checked /> markings</label>
+    <label><input type="checkbox" id="L-goals"      checked /> goals + flags</label>
+    <label><input type="checkbox" id="L-camera"     checked /> camera + frustum</label>
+    <label><input type="checkbox" id="L-trajectory" checked /> trajectory</label>
+    <label><input type="checkbox" id="L-frameplane" checked /> frame plane</label>
+    <label class="off"><input type="checkbox" disabled /> players <span class="soon">M4</span></label>
+    <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
+<h2>Frame plane</h2>
+    <label><input type="checkbox" id="planeauto" checked /> auto: where the axis meets the pitch</label>
+    <label class="row">distance
+      <input type="range" id="planed" min="5" max="200" step="1" value="78" />
+      <span class="num" id="planedv">—</span>
+    </label>
+    <div class="small muted" id="planenote"></div>
+<h2>View</h2>
     <button id="reset">frame all (F)</button>
     <p class="muted small">
       drag: orbit · right-drag: pan · wheel: zoom<br>
       <b>WASD</b> fly · <b>QE</b> up/down · <b>shift</b> faster<br>
       <b>double-click the pitch</b>: orbit around there
     </p>
+    </section>
   </aside>
 </div>
 
@@ -753,6 +766,23 @@ function setBusy(on, label, frac) {
   }
   document.body.classList.toggle("busy", busy);
 }
+
+// Tabs. The choice is remembered: a page reload or a clip change that dropped you back on the
+// first tab would undo the reason for having them.
+function showTab(id) {
+  for (const el of document.querySelectorAll(".tab-pane")) el.hidden = el.id !== id;
+  for (const el of document.querySelectorAll(".tab")) {
+    el.classList.toggle("on", el.dataset.tab === id);
+    el.setAttribute("aria-selected", el.dataset.tab === id ? "true" : "false");
+  }
+  try { localStorage.setItem("camlab.tab", id); } catch { /* private mode; not worth a message */ }
+}
+for (const el of document.querySelectorAll(".tab")) {
+  el.onclick = () => showTab(el.dataset.tab);
+}
+showTab((() => {
+  try { return localStorage.getItem("camlab.tab") || "t-camera"; } catch { return "t-camera"; }
+})());
 
 function adjusting() { return $("e-drag").checked; }
 

@@ -436,3 +436,75 @@ def test_long_jobs_show_progress_and_lock_the_controls():
         "an upload cannot report a fraction, so the bar must be able to say 'working' without one"
     )
     assert ":disabled" in css, "a locked page must look locked, not frozen"
+
+
+def test_the_panel_is_tabbed_and_nothing_was_lost_in_the_move():
+    """Eight sections in one column put the camera numbers — the thing being worked on — below the
+    fold behind the layer toggles. Three tabs now, and this asserts every control survived: a
+    restructure that silently drops a checkbox is a feature that quietly stops existing."""
+    page = (STATIC / "index.html").read_text()
+    css = (STATIC / "style.css").read_text()
+
+    tabs = re.findall(r'data-tab="([a-z-]+)"', page)
+    assert set(tabs) == {"t-camera", "t-clip", "t-view"}
+    for pane in ("t-camera", "t-clip", "t-view"):
+        assert f'id="{pane}"' in page, f"{pane} has a button but no pane"
+
+    # Every control the app depends on, wherever it now lives.
+    for cid in ("clip", "camsel", "u-file", "u-go", "s-go", "s-anchor",
+                "L-turf", "L-markings", "L-goals", "L-camera", "L-trajectory", "L-frameplane",
+                "planeauto", "planed", "e-x", "e-y", "e-z", "e-yaw", "e-elev", "e-roll", "e-focal",
+                "e-clip", "e-copy", "e-copyfrom", "e-flip", "e-reset", "e-resetall",
+                "e-drag", "e-mode", "e-keys", "c-resid", "c-residspot", "c-flag",
+                "solveinfo", "reset", "busy"):
+        assert f'id="{cid}"' in page, f"{cid} did not survive the restructure"
+
+    assert "localStorage" in page, "the open tab must survive a reload"
+    assert ".tab-pane { overflow-y: auto" in css, (
+        "each pane scrolls on its own, or a long one pushes the tab strip out of reach"
+    )
+
+
+def test_write_camera_refuses_a_camera_that_is_not_one():
+    """`runs/fan/camera_ptz.json` holds fourteen frames with a focal of 0.0. That is not a
+    degenerate camera, it is not a camera, and the function that wrote it validated nothing —
+    found by a reviewer reading the files rather than the code."""
+    import numpy as np
+    import pytest as _pytest
+
+    from camlab.camera_file import write_camera
+
+    n = 3
+    kw = dict(model="t", clip_id="nosuchclip", width=100, height=100,
+              frames=np.arange(n), position=np.zeros((n, 3)), rotation=np.zeros((n, 3)))
+    tmp = STATIC.parent / "_probe_camera.json"
+    try:
+        with _pytest.raises(ValueError, match="not a camera"):
+            write_camera(tmp, focal_px=np.array([1000.0, 0.0, 1000.0]), **kw)
+        with _pytest.raises(ValueError, match="NaN or inf"):
+            write_camera(tmp, focal_px=np.array([1000.0, np.nan, 1000.0]), **kw)
+
+        # A bound that the data reaches is a finding, and it is counted rather than left to notice.
+        write_camera(tmp, focal_px=np.array([300.0, 1000.0, 20000.0]), **kw)
+        import json
+        assert json.loads(tmp.read_text())["focal_at_bound"] == 2
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def test_the_pipeline_finds_its_scripts_without_counting_parent_directories():
+    """`parents[3]` holds only for the src layout; from site-packages it is /usr/lib/python3.12.
+    The same defect already cost a session as a container built without scripts/."""
+    from camlab.solve.pipeline import SCRIPTS, _find_scripts
+
+    assert (SCRIPTS / "solve_carry.py").exists()
+    import os
+    old = os.environ.get("CAMLAB_SCRIPTS")
+    try:
+        os.environ["CAMLAB_SCRIPTS"] = "/nowhere-at-all"
+        assert str(_find_scripts()) == "/nowhere-at-all", "an explicit override must win"
+    finally:
+        if old is None:
+            os.environ.pop("CAMLAB_SCRIPTS", None)
+        else:
+            os.environ["CAMLAB_SCRIPTS"] = old

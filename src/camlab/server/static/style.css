@@ -196,3 +196,33 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 #panel input:disabled, #panel select:disabled, #panel button:disabled,
 #bar input:disabled, #bar button:disabled { opacity: .45; cursor: not-allowed; }
 body.busy #bstage, body.busy #view { opacity: .85; }
+
+/* Tabs. The panel had eight sections stacked in one column and the camera numbers — the thing
+   actually being worked on — sat below the fold behind the layer toggles. */
+#tabs { display: flex; gap: 2px; margin: 0 0 12px; border-bottom: 1px solid #2b2f36; }
+#tabs .tab { flex: 1; background: none; border: none; border-bottom: 2px solid transparent;
+             color: #8b929e; padding: 6px 4px; font: inherit; font-size: 11px; cursor: pointer;
+             text-transform: uppercase; letter-spacing: .06em; width: auto; border-radius: 0; }
+#tabs .tab:hover { color: #d7dae0; background: none; }
+#tabs .tab.on { color: #d7dae0; border-bottom-color: #4a90d9; }
+.tab-pane[hidden] { display: none; }
+/* Each pane scrolls on its own, so a long one cannot push the tab strip out of reach. */
+#panel { display: flex; flex-direction: column; overflow: hidden; }
+/* `overflow-x: hidden` matters: the negative margin that lets a pane scroll under the panel's own
+   padding also lets a wide child (the camera table, the key legend) push a horizontal scrollbar
+   across the bottom of the panel. Nothing in here is meant to scroll sideways. */
+.tab-pane { overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0;
+            margin: -4px -14px 0; padding: 4px 14px 12px; }
+.tab-pane > * { max-width: 100%; box-sizing: border-box; }
+#busy, #tabs { flex: 0 0 auto; }
+
+
+/* A long explanation is worth keeping and not worth a third of the tab it sits in. */
+details.note { margin: 8px 0 0; }
+details.note > summary { font-size: 11px; color: #8b929e; cursor: pointer; list-style: none;
+                         padding: 3px 0; }
+details.note > summary::-webkit-details-marker { display: none; }
+details.note > summary::before { content: "▸ "; }
+details.note[open] > summary::before { content: "▾ "; }
+details.note > summary:hover { color: #d7dae0; }
+details.note p { margin-top: 4px; }

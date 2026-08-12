@@ -9,10 +9,13 @@ Last measured 2026-08-12. Read this and `findings/landmines.md`; that is the col
 A clip goes in, a camera comes out, and the camera is right by the only test that counts — the
 projected pitch lands on the painted one.
 
-| clip | worst line, median | frames under 20 px | camera movement between frames |
-|---|---|---|---|
-| `fan` (1080×608, phone, from the stands, floodlit night) | **2.11 px** | **120/120** | 0.00 m |
-| `broadcast` (1920×1080, professional) | **3.98 px** | 59/60 | 0.00 m |
+| clip | worst line | worst **spot** | frames under 20 px | camera movement |
+|---|---|---|---|---|
+| `fan` (1080×608, phone, from the stands, floodlit night) | **1.70 px** | **14.8 px** | 120/120 | 0.00 m |
+| `broadcast` (1920×1080, professional) | **2.60 px** | **13.1 px** | 60/60 | 0.00 m |
+
+Both, always. `worst line` alone was the headline for a week and it understates by 5–9×; the
+register says report two and the register was right about its own project.
 
 `fan` used one hand-aligned frame as its anchor. Without any human at all it reaches 7.75 px and
 100 of 120 — the difference is entirely the seed.

@@ -24,6 +24,26 @@ import numpy as np
 #: Bumped when the meaning of a field changes, never for an addition.
 SCHEMA = 1
 
+#: The same bounds `core/plane_camera.py` fits within. Imported rather than re-declared would be
+#: better, and would be a circular import: `plane_camera` writes cameras.
+FOCAL_BOUNDS = (300.0, 20000.0)
+
+
+def _clip_principal_point(clip_id: str):
+    """The clip's own optical axis, or None when the clip is not on disk (tests, fixtures).
+
+    Deliberately best-effort: this is a note written into the file, not a gate. A camera solved
+    under a principal point that is not the clip's is a legitimate thing to want — `camera_axis`
+    and `camera_auto` differ by exactly that and both are kept — and refusing it here would make
+    the comparison that measured the 0.88 m impossible to run.
+    """
+    try:
+        from camlab.runs import ClipInfo
+
+        return ClipInfo.load(clip_id).principal_point
+    except Exception:                          # noqa: BLE001 - a missing clip is not an error here
+        return None
+
 
 def write_camera(
     path: Path,
@@ -47,8 +67,36 @@ def write_camera(
     valid only with the K it was solved under**, so this is recorded here rather than reconstructed
     by a reader: swapping in a different principal point later does not adjust the camera, it makes
     a different one. Every evaluation reads these back.
+
+    **Three things are checked here that used to be checked nowhere.** A review from pitch3d found
+    all three by reading the files this function had written:
+
+    * A focal of **zero** is not a degenerate camera, it is not a camera. `runs/fan/camera_ptz.json`
+      carries fourteen of them. The crash that caused downstream was fixed months later in
+      `frame_residual`; the thing that wrote it was not touched. Now it raises.
+    * A focal **pinned at a `FOCAL_BOUNDS` end** is a finding, not a setting — this project's own
+      rule. Four fan cameras have nine frames each at 20000 and three at 300, the same twelve
+      frames in all of them, so it is inherited from the per-frame decomposition. Counted into
+      `focal_at_bound` rather than left for someone to notice.
+    * A `(cx, cy)` that **disagrees with the clip's own optical axis** is recorded as
+      `principal_point_offset_px`. The fan clip is cropped, its axis is 638 px from the image
+      centre, and every shipped camera used the image centre anyway — not because a default was
+      wrong but because each stage copies `cx, cy` from its input and nothing ever compared them.
+      Measured, that costs 0.88 m of camera position on a 70 m shot; small, and worth writing in
+      the file rather than rediscovering.
     """
     frames = np.asarray(frames, dtype=int)
+    f = np.asarray(focal_px, dtype=float)
+    if f.size and not np.all(np.isfinite(f)):
+        raise ValueError(f"{path.name}: focal contains NaN or inf")
+    bad = np.flatnonzero(f <= 0.0)
+    if bad.size:
+        raise ValueError(
+            f"{path.name}: {bad.size} frame(s) have a focal of {f[bad[0]]:g} — first is frame "
+            f"{int(frames[bad[0]]) if bad[0] < len(frames) else bad[0]}. That is not a camera. "
+            "Mark the frame degenerate and leave the focal out, or fix the solve."
+        )
+    at_bound = int(((f <= FOCAL_BOUNDS[0] + 1e-6) | (f >= FOCAL_BOUNDS[1] - 1e-6)).sum())
     payload = {
         "schema": SCHEMA,
         "model": model,
@@ -63,8 +111,15 @@ def write_camera(
         "focal_px": np.asarray(focal_px, dtype=float).round(4).tolist(),
         "position": np.asarray(position, dtype=float).round(5).tolist(),
         "rotation": np.asarray(rotation, dtype=float).round(7).tolist(),
+        # A bound that the data reaches is a bound that hides the tail. Counted, always, even when
+        # it is zero — an absent field reads as "not checked" and a zero reads as "checked, clean".
+        "focal_at_bound": at_bound,
         "notes": notes,
     }
+    axis = _clip_principal_point(clip_id)
+    if axis is not None:
+        off = float(np.hypot(payload["cx"] - axis[0], payload["cy"] - axis[1]))
+        payload["principal_point_offset_px"] = round(off, 2)
     for k, v in extra.items():
         payload[k] = v.tolist() if isinstance(v, np.ndarray) else v
     path.parent.mkdir(parents=True, exist_ok=True)

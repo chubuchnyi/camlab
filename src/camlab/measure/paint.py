@@ -29,6 +29,15 @@ RIDGE_SCALES = (2, 4, 7)
 RIDGE_CONTRAST = 16
 RIDGE_MIN_V = 95
 
+#: `RIDGE_CONTRAST` is an ABSOLUTE brightness step, and it was set on two floodlit clips. Measured
+#: over nine (`docs/findings/daylight-and-automatic-thresholds.md`), the value that would equalise
+#: coverage ranges 20..117 — a factor of six — so no single number serves them. The alternative is
+#: to ask the question locally: "is this pixel brighter than the turf immediately around it", which
+#: is what the ridge test means and what `adaptiveThreshold` computes. `ADAPTIVE_C` is how far above
+#: the local mean a pixel must sit; OpenCV SUBTRACTS its `C`, so it is passed negated.
+ADAPTIVE_BLOCK = 51
+ADAPTIVE_C = 4
+
 #: Turf is one narrow hue per clip, so it is measured from the frame rather than hardcoded: a fixed
 #: 25..95 band also admits a stand full of yellow shirts, which then pass the "turf on both sides"
 #: test and paint the crowd with phantom markings.
@@ -75,13 +84,75 @@ def _shift(a: np.ndarray, dy: int, dx: int, fill) -> np.ndarray:
     return out
 
 
-def paint_masks(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """``(distance to the nearest painted CENTRELINE, playing-surface mask)`` for one BGR frame.
+def _ridge_over_threshold(
+    ridge: np.ndarray, *, adaptive: bool, block: int = ADAPTIVE_BLOCK, c: int = ADAPTIVE_C
+) -> np.ndarray:
+    """Which ridge pixels count as paint — by a fixed step, or against the local turf."""
+    import cv2
 
-    The distance is to the centreline, not to the nearest painted pixel. Paint near the goal is
-    8–10 px wide, so "nearest painted pixel" is satisfied anywhere inside the band: an overlay
-    visibly riding the band's edge would score a perfect 0.0 px. That is not a hypothetical — it is
-    how a penalty arc once measured flawless while plainly sitting inside its own marking.
+    if not adaptive:
+        return ridge >= RIDGE_CONTRAST
+    # The ridge fill is -1000 where the "turf on both sides" test failed; clip it to 0 so the
+    # local mean is not dragged down by pixels that were never candidates.
+    u8 = np.clip(ridge, 0, 255).astype(np.uint8)
+    hit = cv2.adaptiveThreshold(
+        u8, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, block, -c
+    )
+    # A local maximum in a flat neighbourhood still clears "above the local mean", so keep the
+    # requirement that there is a real ridge at all.
+    return (hit > 0) & (ridge > 0)
+
+
+#: The self-tuning search. `RIDGE_CONTRAST` and `ADAPTIVE_C` are both constants someone chose; this
+#: chooses nothing and asks the frame instead. The objective is total length of merged markings —
+#: what every stage downstream actually consumes — and NOT their count, because the runaway daylight
+#: clip returns 1300+ "lines" of turf texture and no marking among them.
+#: The range brackets the 20..117 the nine clips were measured to need.
+AUTO_COARSE = (12, 24, 36, 48, 60, 75, 90, 110)
+AUTO_FINE_STEP = 6
+
+
+def _merged_length(ridge, val, surface, t: int) -> float:
+    """Total length of markings that survive the merge, at ridge threshold ``t``."""
+    from .lines import detect_segments, merge_collinear
+
+    mask = (ridge >= t) & (val >= RIDGE_MIN_V) & (surface > 0)
+    if not mask.any():
+        return 0.0
+    segs = detect_segments(distance_from_mask(mask), surface)
+    if not len(segs):
+        return 0.0
+    merged = merge_collinear(segs)
+    if not len(merged):
+        return 0.0
+    return float(np.hypot(merged[:, 2] - merged[:, 0], merged[:, 3] - merged[:, 1]).sum())
+
+
+def auto_contrast(bgr: np.ndarray) -> tuple[int, float]:
+    """``(threshold, score)`` this frame wants — coarse-to-fine, no constant to set.
+
+    A plain sweep of every candidate was tried and abandoned for cost (22 thresholds over nine
+    clips exceeded ten minutes). This pays for the ridge map once and searches ~10 thresholds
+    instead of 22, which is where the time actually goes.
+    """
+    return auto_contrast_from(*ridge_map(bgr))
+
+
+def auto_contrast_from(ridge, val, surface) -> tuple[int, float]:
+    """`auto_contrast` for a ridge map already computed."""
+    scored = {t: _merged_length(ridge, val, surface, t) for t in AUTO_COARSE}
+    best = max(scored, key=lambda t: scored[t])
+    for t in (best - AUTO_FINE_STEP, best + AUTO_FINE_STEP):
+        if t > 0 and t not in scored:
+            scored[t] = _merged_length(ridge, val, surface, t)
+    best = max(scored, key=lambda t: scored[t])
+    return best, scored[best]
+
+
+def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(ridge, value, surface)`` — everything before the threshold, which is the expensive half.
+
+    Split out so a search over thresholds pays for the ridge once instead of once per candidate.
     """
     import cv2
 
@@ -99,11 +170,48 @@ def paint_masks(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             both = _shift(turf, d * dy, d * dx, False) & _shift(turf, -d * dy, -d * dx, False)
             side[~both] = -1000
             np.maximum(ridge, side, out=ridge)
+    return ridge, val, surface
 
-    lines = ((ridge >= RIDGE_CONTRAST) & (val >= RIDGE_MIN_V) & (surface > 0)).astype(np.uint8)
-    inner = cv2.distanceTransform(lines, cv2.DIST_L2, 5)
+
+def distance_from_mask(lines: np.ndarray) -> np.ndarray:
+    """Distance to the painted CENTRELINE, from a boolean paint mask."""
+    import cv2
+
+    inner = cv2.distanceTransform(lines.astype(np.uint8), cv2.DIST_L2, 5)
     spine = (inner >= cv2.dilate(inner, np.ones((3, 3), np.uint8)) - 1e-3) & (inner > 0)
-    dist = cv2.distanceTransform((~spine).astype(np.uint8), cv2.DIST_L2, 5)
+    return cv2.distanceTransform((~spine).astype(np.uint8), cv2.DIST_L2, 5)
+
+
+def paint_masks(
+    bgr: np.ndarray, *, contrast: int | str | None = None, adaptive: bool = False,
+    block: int = ADAPTIVE_BLOCK, c: int = ADAPTIVE_C
+) -> tuple[np.ndarray, np.ndarray]:
+    """``(distance to the nearest painted CENTRELINE, playing-surface mask)`` for one BGR frame.
+
+    The distance is to the centreline, not to the nearest painted pixel. Paint near the goal is
+    8–10 px wide, so "nearest painted pixel" is satisfied anywhere inside the band: an overlay
+    visibly riding the band's edge would score a perfect 0.0 px. That is not a hypothetical — it is
+    how a penalty arc once measured flawless while plainly sitting inside its own marking.
+
+    Three ways to decide which ridge pixels are paint, in order of how much a human sets:
+
+    ``contrast=None, adaptive=False``  the shipped fixed `RIDGE_CONTRAST` step.
+    ``adaptive=True``                  a local step, `c` above the neighbourhood mean.
+    ``contrast="auto"``                the threshold this frame's own markings want. Nothing set.
+
+    Default is the fixed step: every camera in `runs/` was solved under it, and a camera is only
+    valid under the evidence it was fitted to.
+    """
+    ridge, val, surface = ridge_map(bgr)
+
+    if contrast == "auto":
+        contrast = auto_contrast_from(ridge, val, surface)[0]
+    if contrast is not None:
+        over = ridge >= int(contrast)
+    else:
+        over = _ridge_over_threshold(ridge, adaptive=adaptive, block=block, c=c)
+
+    dist = distance_from_mask(over & (val >= RIDGE_MIN_V) & (surface > 0))
     return dist, surface
 
 

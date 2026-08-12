@@ -24,12 +24,38 @@ Progress is reported through a callback rather than printed, because the caller 
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
-SCRIPTS = REPO / "scripts"
+
+def _find_scripts() -> Path:
+    """Where the stage scripts live.
+
+    Counting parent directories was the previous answer and it holds only for the development
+    layout: from `site-packages/camlab/solve/pipeline.py`, `parents[3]` is `/usr/lib/python3.12`
+    and `SCRIPTS` is a directory that does not exist. The same defect has already cost one session
+    in a different shape — the container was built without `scripts/` and the viewer's solve button
+    failed with "can't open file /app/scripts/solve_carry.py".
+
+    So: an explicit override first, then the two layouts that actually occur, then a clear failure
+    rather than a path nobody will look at.
+    """
+    env = os.environ.get("CAMLAB_SCRIPTS")
+    if env:
+        return Path(env).expanduser().resolve()
+    here = Path(__file__).resolve()
+    for base in (here.parents[3], here.parents[2], Path.cwd()):
+        cand = base / "scripts"
+        if (cand / "solve_carry.py").exists():
+            return cand
+    # Nothing found. Return the development guess so the error names a path a human recognises.
+    return here.parents[3] / "scripts"
+
+
+SCRIPTS = _find_scripts()
+REPO = SCRIPTS.parent
 
 #: Each stage as (label, script, extra args). Run as subprocesses rather than imported: the scripts
 #: are the thing that has been measured, and a second import-shaped path through the same logic is
@@ -54,6 +80,12 @@ def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
     looks like every other camera file.
     """
     out: dict = {"stages": {}, "ok": False, "camera": None}
+    if not (SCRIPTS / "solve_carry.py").exists():
+        out["stages"]["setup"] = (
+            f"the stage scripts are not at {SCRIPTS}. Set CAMLAB_SCRIPTS to the directory holding "
+            "solve_carry.py, or install from a checkout."
+        )
+        return out
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
         if script == "solve_carry.py":

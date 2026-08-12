@@ -12,15 +12,21 @@ only the way in.
 
 ## Where it stands
 
-| clip | worst line, median | frames under 20 px | camera movement between frames |
-|---|---|---|---|
-| `fan` — 1080×608, a phone from the stands, floodlit night | **2.11 px** | **120/120** | 0.00 m |
-| `broadcast` — 1920×1080, professional | **3.98 px** | 59/60 | 0.00 m |
+| clip | worst line | worst **spot** | frames under 20 px | camera movement between frames |
+|---|---|---|---|---|
+| `fan` — 1080×608, a phone from the stands, floodlit night | **1.70 px** | **14.8 px** | 120/120 | 0.00 m |
+| `broadcast` — 1920×1080, professional | **2.60 px** | **13.1 px** | 60/60 | 0.00 m |
+
+**Both numbers, because this project's own rule says so** and the headline used to carry only the
+first. `worst line` is the worst marking's own median; `worst spot` is the worst single sample on
+it, which is what a ruler finds. They differ by 5–9× and the second is the honest one to quote at
+someone holding a ruler.
 
 On `broadcast`, camlab's camera lands **2.06 m** from pitch3d's, which was fitted from PnLCalib
-keypoints by a completely different route, with the focals agreeing to 1.1 % — and camlab scores
-better against the paint, 3.98 px against 9.49. That is the only external check this project has;
-everything else is camlab against camlab or camlab against an eye.
+keypoints by a completely different route, with the focals agreeing to 1.1 %. camlab also fits the
+paint better, and the margin depends on which statistic: 2.60 px against 9.47 on worst line, 13.1
+against 16.6 on worst spot. That is the only external check this project has; everything else is
+camlab against camlab or camlab against an eye.
 
 `fan` used one hand-aligned frame as its anchor. With no human at all the same chain reaches
 7.75 px and 100 of 120 frames. The whole difference is the seed, and getting one automatically is
