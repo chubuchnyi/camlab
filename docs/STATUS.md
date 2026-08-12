@@ -111,6 +111,18 @@ Everything lands in `camera_manual.json`, laid over the solve, which is never re
 Length is a filter, not a discriminator: 39 % of non-markings still get through. Cheap geometric
 signals are exhausted.
 
+**And as of 2026-08-12 it has no measured payoff left on the clips that are on disk**
+(`findings/14-has-nothing-left-to-buy-on-these-clips-2026-08-12.md`). Recall is 4 % on `fan` and
+1 % on `broadcast`; `g15449383` scores two markings because only three reach the frame and one of
+those never reaches the grass, which no detector can fix. The clips whose line counts exploded —
+`15449387` at 64 a frame and `15750079` at 1967 — are not ingested any more. Do not work this
+further until a measurement on a clip that exists says it costs something.
+
+One real defect was found there and deliberately not fixed: the turf test's `s > 70` drops the
+**sunlit** half of `g15449383` (the rejected pixels are brighter than the accepted ones, V 126
+against 99, and washed out to S 54). Sweeping it 70 → 15 grows the surface mask from 14 % to ~35 %
+of the image and improves not one measured number, so it is recorded rather than changed.
+
 **#11 — find the first camera automatically.** Five ranking attempts: 113 m → 113 m → 20.9 m →
 54 m → 128 m from the truth. The generator is fine — the right answer *is* in the pool, 4.8 m from
 the truth with the focal 11 % off. Choosing is what fails, and not because the chooser is bad:

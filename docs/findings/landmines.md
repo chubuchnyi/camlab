@@ -32,6 +32,14 @@ Ordered by how much they cost.
   puts 105 m ahead by 20×, so that is settled — but 68 m and 72 m score **bit-for-bit identically**,
   because the touchlines never land inside the frame and on the surface. The width is assumed on
   this clip, not measured, and no number would move if it were wrong.
+- **Check what is IN THE FRAME before blaming the detector.** `g15449383` scores two markings, and
+  a day went into why the paint was being missed. Three markings reach the image at all and one of
+  those never reaches the grass — it is a low side-on shot of the centre circle. Count what
+  projects into the picture first; it is one cheap query and it ends the question.
+- **Otsu splits a unimodal distribution in half.** Offered as the automatic replacement for the
+  turf test's hardcoded `s > 70`, it picks 135 on `fan` and 134 on `broadcast` — nearly double the
+  shipped value — because the saturation there is one mode and Otsu always returns a cut. The
+  threshold wanted was below the mode, not at its middle.
 - **A conclusion measured on one clip is a conclusion about one clip.** Most of what was settled on
   2026-08-11 — the overlap fix, the straightness refutation, the cross-ratio, the principal point —
   was measured on `fan` alone. Re-checked on `broadcast` and a third clip, the straightness result
