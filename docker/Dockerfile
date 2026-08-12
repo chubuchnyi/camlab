@@ -19,6 +19,10 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY calib/ ./calib/
+# The solve stages, which the server runs as subprocesses. Without them the viewer's solve button
+# fails with "can't open file '/app/scripts/solve_carry.py'" — the image had the library and not
+# the thing that drives it.
+COPY scripts/ ./scripts/
 # `[cv]`, not bare: camlab's ground truth is the paint in the frame, and finding it is a cv2
 # pipeline. Without the extra the image starts, serves the viewer, and returns 500 from
 # /api/residual — the one endpoint that answers "is this camera right?".

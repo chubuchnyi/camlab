@@ -275,3 +275,18 @@ def test_the_default_camera_is_labelled_as_a_guess():
         d = json.loads(p.read_text())
         assert d.get("is_default") is True
         assert d["model"] == "hand_start_default"
+
+
+def test_the_image_ships_the_scripts_the_server_runs():
+    """The server runs the solve stages as subprocesses, so they have to be IN the image.
+
+    They were not: the first end-to-end solve from the browser failed with "can't open file
+    '/app/scripts/solve_carry.py'". The container had the library and not the thing that drives it,
+    and nothing local could have caught that — the scripts are right there on a dev box.
+    """
+    from camlab.solve.pipeline import SCRIPTS, STAGES
+
+    docker = (SCRIPTS.parent / "docker" / "Dockerfile").read_text()
+    assert "COPY scripts/" in docker, "the image must carry the scripts the server shells out to"
+    for _label, script, _extra in STAGES:
+        assert (SCRIPTS / script).exists(), f"{script} is named by the pipeline and missing"
