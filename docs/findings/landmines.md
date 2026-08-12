@@ -44,6 +44,19 @@ Ordered by how much they cost.
   first stage read: a second press compounds on the first with no way back, and the manual layer —
   keyed by file name — ends up laid over a different solve than it was aimed against. Happened on
   `CRO_MOR_194948`. `pipeline.run` now snapshots such a seed to `camera_seed_used.json` first.
+- **A clip-scoped position write is shape-identical to a hand aim.** The viewer's "position applies
+  to the whole clip" tick-box stamps an entry on EVERY frame — the shared position with that
+  frame's own rotation and focal — and 117 of `fan`'s 120 manual entries are that, not aims.
+  Feeding them to the solver put `--anchor 0` on a 31.55 px anchor where the curated file holds
+  5.30, and frame 51 on **102.01 px** against 2.17. Separable exactly, not by heuristic: in a
+  broadcast entry the rotation and focal are bit-identical to the solve underneath.
+- **Never rank two stores of the same thing by which store they are.** Where an anchor was recorded
+  says nothing about whether it is a good one. `solve_carry.py` now scores every candidate against
+  the paint and prints all of them with the choice; the run's own file winning by priority is what
+  produced the 102.01 px above.
+- **A test whose two inputs never name the same key never forces the choice it exists to test.**
+  The first round of hand-anchor tests passed both defects above for exactly that reason: the
+  manual store and the calib store were given disjoint frame numbers.
 - **The solver never read the viewer's hand edits.** Every edit the panel writes goes to the run's
   `camera_manual.json`; `solve_carry.py` read `calib/<clip>-hand-aligned-*.json`; and
   `solve/pipeline.py` passed `--no-hand` unconditionally, so the "solve this clip" button threw the

@@ -36,7 +36,7 @@ from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
 from camlab.measure.residual import frame_residual  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
-from camlab.solve.hand import hand_anchors  # noqa: E402
+from camlab.solve.hand import hand_candidates  # noqa: E402
 from camlab.solve.refit import refit_frame, refit_frame_lm  # noqa: E402
 
 
@@ -65,35 +65,58 @@ def main() -> None:
     cx, cy = float(seed["cx"]), float(seed["cy"])
     n = len(seed["frames"])
 
-    # THE RUN'S OWN `camera_manual.json` FIRST. That is where the viewer writes every hand edit —
-    # typed number, gizmo drag, keyboard nudge, auto-fit — keyed by the solve it overlays, which is
-    # exactly this seed. Until 2026-08-12 no solver read it at all: an operator would aim frame 0
-    # by eye, press solve, and the chain would silently refit from the untouched default. Measured
-    # on `CRO_MOR_194948` frame 0, what that cost — worst line **24.17 px on 2 markings** from the
-    # default pose against **3.67 px on 10** from the operator's, and `camera_carry.json` came out
-    # with `anchors_hand_aligned: []` and `rotation[0]` bit-identical to the shipped default.
+    def paint_worst(i, focal, rvec, centre) -> float:
+        """The worst marking's own median distance to the paint on frame `i`. The judge.
+
+        `worst_line_px`, not the pooled median: a camera can sit on one family of lines while the
+        family parallel to it is metres off, and pooling lets the lines that fit outvote the ones
+        that do not. NaN when the frame cannot be scored at all, and NaN sorts last below.
+        """
+        r = frame_residual(info.frame_path(i), focal, rvec, centre, frame=i, cx=cx, cy=cy)
+        return float(r.worst_line_px)
+
+    # BOTH stores offer candidates and the PAINT picks. Ranking by store is what broke this the
+    # first time it was fixed: preferring the run's own file put `fan --anchor 0` on a 31.55 px
+    # anchor where `calib/` holds 5.30, and frame 51 on 102.01 px against 2.17. Where an anchor was
+    # recorded says nothing about whether it is a good one, and the frames are right here.
     #
-    # `calib/<clip>-hand-aligned-*.json` is the older store and is still read, second, so the
-    # `fan` anchors recorded there keep working. Two stores that do not know about each other is
-    # how this happened; the run's own file is the one to write to.
-    hand, hand_where = hand_anchors(
-        info.dir, args.seed,
+    # Clip-scoped position writes are dropped before the choice — 117 of `fan`'s 120 manual entries
+    # are the "position applies to the whole clip" tick-box, not an aim. See `solve/hand.py`.
+    candidates = hand_candidates(
+        info.dir, args.seed, seed_camera=seed,
         calib_dir=Path(__file__).resolve().parent.parent / "calib", clip_id=args.clip)
     if args.no_hand:
-        hand, hand_where = {}, None
+        candidates = {}
     anchors = sorted({int(a) for a in str(args.anchor).split(",") if a.strip() != ""})
     if not anchors or anchors[0] < 0 or anchors[-1] >= n:
         raise SystemExit(f"anchors {anchors} must all be within 0..{n - 1}")
-    by_hand = [a for a in anchors if str(a) in hand]
 
-    print(f"== {args.clip}: {n} frames, anchors {anchors} "
-          f"({len(by_hand)} hand-aligned: {by_hand}"
-          f"{'' if hand_where is None else ' from ' + hand_where}), K = ({cx:.0f}, {cy:.0f})")
+    print(f"== {args.clip}: {n} frames, anchors {anchors}, K = ({cx:.0f}, {cy:.0f})")
+
+    hand: dict[str, dict] = {}
+    for a in anchors:
+        offers = candidates.get(str(a), [])
+        if not offers:
+            continue
+        # The seed's own pose is a candidate too, and it wins when every hand aim is worse than it.
+        scored = [(paint_worst(a, seed["focal_px"][a], seed["rotation"][a], seed["position"][a]),
+                   "the solve itself", None)]
+        scored += [(paint_worst(a, e["focal_px"], e["rotation"], e["position"]), src, e)
+                   for src, e in offers]
+        scored.sort(key=lambda r: (np.isnan(r[0]), r[0]))
+        best, src, entry = scored[0]
+        for w, s_, _e in scored:
+            print(f"   anchor {a}: {w:8.2f} px  {s_}")
+        if entry is not None:
+            hand[str(a)] = entry
+        print(f"   anchor {a}: using {src} at {best:.2f} px")
+
+    by_hand = [a for a in anchors if str(a) in hand]
     # Said out loud, because "the anchor you aimed was ignored" is invisible in the result: the
     # chain still reports 120 of 120 frames and a plausible focal range.
     if not by_hand:
-        print("   NO HAND ANCHOR — every anchor is being refitted from the seed's own pose. "
-              "If you aimed one in the viewer, it is not being used.")
+        print("   NO HAND ANCHOR IS BEING USED — every anchor is refitted from the seed's "
+              "own pose. If you aimed one in the viewer, the paint preferred the solve to it.")
 
     pairs = measure_pairs({f: info.frame_path(f) for f in range(n)}, gaps=(1,))
     h_of = {(p.i, p.j): p for p in pairs}
