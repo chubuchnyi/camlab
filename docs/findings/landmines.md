@@ -39,6 +39,13 @@ Ordered by how much they cost.
   algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
   Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
   below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
+- **A spurious line costs nothing on a solved clip and everything in the bootstrap.** #14's
+  precision half was measured against the residual on `fan` and `broadcast`, found worthless, and
+  parked — but on a solved clip the camera is already right and a non-marking changes nothing.
+  Where it bites is choosing four correspondences out of nine: on `fan` frame 8, **two of nine
+  detected segments are 55–60 px from any marking**, and removing them moves the best hypothesis
+  anywhere in the pool from 11.9 m to **3.7 m** and its focal from 28 % wrong to 2 %. Measure a
+  detector defect where the decision is made, not where the answer is already known.
 - **Check what is IN THE FRAME before blaming the detector.** `g15449383` scores two markings, and
   a day went into why the paint was being missed. Three markings reach the image at all and one of
   those never reaches the grass — it is a low side-on shot of the centre circle. Count what

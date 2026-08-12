@@ -132,6 +132,13 @@ One real defect was found there and deliberately not fixed: the turf test's `s >
 against 99, and washed out to S 54). Sweeping it 70 → 15 grows the surface mask from 14 % to ~35 %
 of the image and improves not one measured number, so it is recorded rather than changed.
 
+**#11 is blocked by #14, measured 2026-08-12** — see `findings/11-is-blocked-by-14-2026-08-12.md`.
+On `fan` frame 8 two of the nine detected segments are 55–60 px from any marking, and one of them
+is 567 px long, so length does not catch it. Feeding the generator the seven real ones moves the
+best hypothesis in the pool from **11.9 m to 3.7 m** and the focal from 28 % wrong to **2.1 %**.
+The gates are not the problem: the solved camera scores 0.0 % unmatched on every frame checked, so
+`max_missing` would have let it through. Do #14's precision half first; the two are one task.
+
 **#11 — find the first camera automatically.** Five ranking attempts: 113 m → 113 m → 20.9 m →
 54 m → 128 m from the truth. The generator is fine — the right answer *is* in the pool, 4.8 m from
 the truth with the focal 11 % off. Choosing is what fails, and not because the chooser is bad:
