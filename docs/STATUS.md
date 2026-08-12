@@ -20,11 +20,21 @@ register says report two and the register was right about its own project.
 `fan` used one hand-aligned frame as its anchor. Without any human at all it reaches 7.75 px and
 100 of 120 — the difference is entirely the seed.
 
-**`broadcast` is the only external check this project has.** camlab's shared centre lands
-2.06 m from pitch3d's `rigid_119` solve, which was fitted from PnLCalib keypoints by a completely
-different route, and the focals agree to 1.1 % — while camlab scores better against the paint,
-3.98 px against 9.49. Its cameras are backed up in `calib/cameras/` because `runs/` is a docker
-volume on the box.
+**`broadcast` is the only external check this project has**, and the honest form of it is not the
+one this file carried for a week.
+
+camlab's shared centre and pitch3d's `rigid_119` — fitted from PnLCalib keypoints by a completely
+different route — **agree to 0.10 m across the two well-determined directions** and differ by
+2.06 m along the focal/distance degeneracy, 2.8° off the line of sight, with focals 1.1 % apart.
+"2.06 m apart" understates the agreement twentyfold where it means anything.
+
+The paint discriminates along that axis, which is what makes it usable: pitch3d 9.47 px worst line
+and 16.6 worst spot, camlab 4.17 and 12.1. Two metres along the degenerate direction costs 2.3× —
+independent evidence for "pinned to about a metre" below, measured between two solves sharing no
+code instead of by sliding one.
+
+`camera_known` is pitch3d's fit judged by camlab's metric: an independent camera, not an
+independent metric. Both cameras are backed up in `calib/cameras/`, because `runs/` is gitignored.
 
 ## The pipeline, and why each stage is there
 

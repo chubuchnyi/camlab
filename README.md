@@ -22,11 +22,21 @@ first. `worst line` is the worst marking's own median; `worst spot` is the worst
 it, which is what a ruler finds. They differ by 5–9× and the second is the honest one to quote at
 someone holding a ruler.
 
-On `broadcast`, camlab's camera lands **2.06 m** from pitch3d's, which was fitted from PnLCalib
-keypoints by a completely different route, with the focals agreeing to 1.1 %. camlab also fits the
-paint better, and the margin depends on which statistic: 2.60 px against 9.47 on worst line, 13.1
-against 16.6 on worst spot. That is the only external check this project has; everything else is
-camlab against camlab or camlab against an eye.
+On `broadcast`, camlab's camera and pitch3d's — fitted from PnLCalib keypoints by a completely
+different route — **agree to 0.10 m across the two well-determined directions** and differ by
+2.06 m along the one both projects have independently measured to be degenerate, the focal/distance
+trade. The separation is 2.8° off the line of sight and the focals differ by 1.1 %. Quoting the
+2.06 m alone, as this file used to, understates the agreement by twenty times in the directions
+where agreement means anything.
+
+The paint does discriminate along that axis, which is what makes the number safe to use: pitch3d's
+fit scores 9.47 px worst line and 16.6 px worst spot, camlab's 4.17 and 12.1. Two metres along the
+degenerate direction costs 2.3×, which is independent evidence for "the position is pinned to about
+a metre" — measured between two solves that share no code rather than by sliding one of them.
+
+One caveat, and pitch3d raised it themselves: `camera_known` is their fit judged by camlab's
+metric. An independent camera, not an independent metric. It is still the only external check this
+project has; everything else is camlab against camlab or camlab against an eye.
 
 `fan` used one hand-aligned frame as its anchor. With no human at all the same chain reaches
 7.75 px and 100 of 120 frames. The whole difference is the seed, and getting one automatically is

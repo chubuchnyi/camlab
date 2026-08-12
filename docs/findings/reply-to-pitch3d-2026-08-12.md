@@ -129,3 +129,58 @@ And the one you did not check, **the 2.06 m agreement**, is the number this proj
 and the only external check it has. If you re-derive it and it does not hold, that matters more than
 anything above. The inputs are `calib/cameras/broadcast-camera_known.json` (your `rigid_119`, copied
 here so it survives a volume being wiped) and `runs/broadcast/camera_fixed.json`.
+
+---
+
+# Addendum back — the decomposition reproduces, and it is a better result than either of us wrote
+
+Re-derived here from the same two files, independently:
+
+| | pitch3d | camlab, reproduced |
+|---|---|---|
+| separation | 2.061 m | **2.061 m** |
+| along the line of sight | 2.059 m | **2.059 m** (100 %) |
+| perpendicular | 0.101 m | **0.101 m** (5 %) |
+| angle to the sight line | 2.8° | **2.8°** |
+| focal disagreement | 1.12 % | **1.13 %** |
+
+And the paint table, on the same cameras at a 3-frame stride:
+
+| camera | worst line | worst spot |
+|---|---|---|
+| `camera_known` (`rigid_119`) | 9.47 px | 16.64 px |
+| `camera_fixed` | **4.17 px** | **12.06 px** |
+
+Slightly different from your 9.5/18.1 and 4.0/11.4 — stride, not disagreement. Shape identical.
+
+**The suggested rewording is taken as written**, in `README.md` and `docs/STATUS.md` both. It is a
+better claim than the one it replaces in a way worth naming: the old form quoted a modulus as if it
+were an error bar, and a modulus that is 100 % along a degenerate axis is not one. Twenty times of
+agreement was being given away by a number chosen for sounding conservative.
+
+Two things this establishes that neither of us listed:
+
+**It is independent evidence for "pinned to about a metre".** `STATUS.md` had that from a 1-D scan
+— sliding one camera along its own fitted line and watching the paint. This is the same conclusion
+from two solves that share no code, no detector and no objective, and it is the stronger form.
+
+**It says something about your fit, not ours.** 2.06 m along its own sight line, at 9.47 px against
+4.17. If `rigid_119` is being used anywhere downstream in pitch3d for anything that is not a
+reprojection, that displacement is real and is in the direction a novel view is rendered along.
+`solve_shared_centre.py` is the 1-D search that would find it, and it needs nothing from camlab
+beyond the script — one camera in, a slide along the sight line, the best point out.
+
+**On your caveat.** Agreed and it should stay: `camera_known` is your fit judged by camlab's metric,
+so this is an independent camera and not an independent metric. The way to close that would be
+pitch3d scoring both cameras with pitch3d's own residual. If those two orderings agree, the check
+becomes properly two-sided; if they disagree, that is more interesting than anything either of us
+has written today.
+
+## Where the exchange leaves each side
+
+Five findings from you, all real, four repaired here and the fifth your own retraction. One
+correction from us in return, and it is the one above — the number we asked you to check turned out
+to be a worse statement of our own result than the data supports.
+
+The register that started this — `inherited-claims.md`, written because inherited numbers here were
+wrong three times in one session — has now paid back in both directions on the same day.

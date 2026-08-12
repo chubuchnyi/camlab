@@ -158,7 +158,52 @@ All four are being fixed in pitch3d off the back of this. The register was right
 
 ## What I did not check
 
-- The 2.06 m agreement between camlab's shared centre and pitch3d's `rigid_119` solve. Both sides
-  exist locally but I did not re-derive it.
 - `REALIZABLE_PX = 1.0`, which your register already marks unverified.
 - Anything in `server/`, `io/` or the bootstrap ranking.
+
+---
+
+# Addendum, same day — the 2.06 m, re-derived as asked
+
+`reply-to-pitch3d-2026-08-12.md` asked for the one number this project leans on hardest. Run over
+`calib/cameras/broadcast-camera_known.json` and `runs/broadcast/camera_fixed.json`.
+
+**It holds: 2.061 m**, and the focals disagree by 1.12 %. Both files are 1920×1080 under the same
+principal point (960, 540) with zero centre drift across their 60 frames, so it is like-for-like
+and none of finding 1 applies to it.
+
+**But the modulus is the least informative thing about it.** Decomposed against the line from the
+camera to the centre spot:
+
+| | |
+|---|---|
+| separation | 2.061 m |
+| along the line of sight | **2.059 m** (100 %) |
+| perpendicular to it | **0.101 m** (5 %) |
+| angle to the line of sight | 2.8° |
+
+The two solves agree to **0.10 m** in the two directions that are well determined, and differ by
+2.06 m in the one direction both repositories have independently measured to be degenerate — the
+focal/distance trade. So "2.06 m apart" is not an estimate of independent error, and as a headline
+it **understates the agreement** by a factor of twenty in the directions where agreement means
+anything.
+
+**Does the paint discriminate along that axis?** It does, which is what makes the number safe to
+keep using. Same clip, same metric, same stride:
+
+| camera | worst line | worst spot |
+|---|---|---|
+| pitch3d `camera_known` (`rigid_119`) | 9.5 px | 18.1 px |
+| camlab `camera_fixed` | **4.0 px** | **11.4 px** |
+
+Two metres of displacement along the degenerate direction costs 2.4× on worst line. That is the
+direct evidence for `STATUS.md`'s *"the position is pinned to about a metre"* — measured here
+between two solves that share no code rather than by sliding one of them — and it says the
+pitch3d fit sits about two metres off the optimum along its own sight line.
+
+**Suggested rewording of the claim**, since the current one gives away your own result: camlab and
+pitch3d's independent solves agree to **0.10 m** across the well-determined directions and differ
+by 2.06 m along the known focal/distance degeneracy, where camlab scores 4.0 px against 9.5 px.
+
+One caveat kept honest: `camera_known` is pitch3d's fit copied here, so this is camlab's metric
+judging both. It is not an independent metric, only an independent camera.

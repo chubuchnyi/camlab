@@ -111,21 +111,36 @@ def _ridge_over_threshold(
 AUTO_COARSE = (12, 24, 36, 48, 60, 75, 90, 110)
 AUTO_FINE_STEP = 6
 
+#: Painted pixels per megapixel, above which the paint stage has already failed and nothing
+#: downstream is worth running. Measured over nine clips: the ones that work sit at 3300-9300,
+#: the ones that have given up at 48000-52000 (findings §4). Resolution-free, so it compares a
+#: 4K overhead with a phone. This is a CEILING on the search, not a target.
+PAINT_CEILING_PX_PER_MPX = 10000.0
 
-def _merged_length(ridge, val, surface, t: int) -> float:
-    """Total length of markings that survive the merge, at ridge threshold ``t``."""
+
+def _merged_length(ridge, val, surface, t: int) -> tuple[float, float]:
+    """``(total merged length, painted px per megapixel)`` at ridge threshold ``t``.
+
+    Both, because the length ALONE is gameable and was measured to be: lowering the threshold
+    merges turf texture into long spurious lines, so a search that only maximises length runs
+    to the bottom of its range and reports 389 "markings" on a pitch that has 17. The second
+    number is what says the paint stage has given up.
+    """
     from .lines import detect_segments, merge_collinear
 
     mask = (ridge >= t) & (val >= RIDGE_MIN_V) & (surface > 0)
     if not mask.any():
-        return 0.0
-    segs = detect_segments(distance_from_mask(mask), surface)
+        return 0.0, 0.0
+    dist = distance_from_mask(mask)
+    px_per_mpx = float((dist == 0).sum()) / (ridge.size / 1e6)
+    segs = detect_segments(dist, surface)
     if not len(segs):
-        return 0.0
+        return 0.0, px_per_mpx
     merged = merge_collinear(segs)
     if not len(merged):
-        return 0.0
-    return float(np.hypot(merged[:, 2] - merged[:, 0], merged[:, 3] - merged[:, 1]).sum())
+        return 0.0, px_per_mpx
+    total = float(np.hypot(merged[:, 2] - merged[:, 0], merged[:, 3] - merged[:, 1]).sum())
+    return total, px_per_mpx
 
 
 def auto_contrast(bgr: np.ndarray) -> tuple[int, float]:
@@ -139,14 +154,71 @@ def auto_contrast(bgr: np.ndarray) -> tuple[int, float]:
 
 
 def auto_contrast_from(ridge, val, surface) -> tuple[int, float]:
-    """`auto_contrast` for a ridge map already computed."""
-    scored = {t: _merged_length(ridge, val, surface, t) for t in AUTO_COARSE}
-    best = max(scored, key=lambda t: scored[t])
-    for t in (best - AUTO_FINE_STEP, best + AUTO_FINE_STEP):
+    """`auto_contrast` for a ridge map already computed.
+
+    Maximise merged length **subject to** the paint stage not having given up. Without the
+    constraint the search pins at the bottom of its range on 4 of 10 sample clips.
+    """
+    scored: dict[int, tuple[float, float]] = {}
+
+    def evaluate(t: int) -> None:
         if t > 0 and t not in scored:
             scored[t] = _merged_length(ridge, val, surface, t)
-    best = max(scored, key=lambda t: scored[t])
-    return best, scored[best]
+
+    def pick() -> int:
+        ok = [t for t, (_, px) in scored.items() if px <= PAINT_CEILING_PX_PER_MPX]
+        # Nothing admissible means the surface stage failed, not the threshold. Take the
+        # strictest candidate and let the caller's pre-flight check refuse the clip.
+        return max(ok, key=lambda t: scored[t][0]) if ok else max(scored)
+
+    for t in AUTO_COARSE:
+        evaluate(t)
+    best = pick()
+    evaluate(best - AUTO_FINE_STEP)
+    evaluate(best + AUTO_FINE_STEP)
+    best = pick()
+    return best, scored[best][0]
+
+
+@dataclass(frozen=True)
+class ClipContrast:
+    """The paint threshold a clip wants, and how well its own frames agree on it."""
+
+    contrast: int
+    """The value to use — the median over the sampled frames."""
+    spread: tuple[int, int]
+    """Lowest and highest a single frame chose. A wide spread is the flat objective, not zoom."""
+    per_frame: tuple[int, ...]
+    settled: bool
+    """False when the frames disagree so much that the median is not a clip property."""
+
+
+#: How far the per-frame choices may range before the median stops meaning anything. Measured over
+#: four clips at five frames each: the tightest was 6..18 and the loosest 6..48, so this refuses
+#: nothing today — it exists to be reported, and to fire on a clip that is worse than any seen.
+SETTLED_RATIO = 8.0
+
+
+def auto_contrast_for_clip(frames, *, min_frames: int = 3) -> ClipContrast:
+    """The threshold for a CLIP, from an iterable of its BGR frames.
+
+    **Not per frame.** Measured on four clips, five frames each: the winning threshold moves
+    6..48 on the tripod broadcast clip, whose lighting does not change at all. The objective is
+    flat enough that one frame does not determine it, and a per-frame threshold would make the
+    paint stage jitter underneath a per-frame camera solve. The median over several frames is a
+    clip property; a single frame's pick is not.
+    """
+    picks = [auto_contrast(f)[0] for f in frames]
+    if len(picks) < min_frames:
+        raise ValueError(f"need at least {min_frames} frames to call a threshold a clip property, "
+                         f"got {len(picks)}")
+    lo, hi = min(picks), max(picks)
+    return ClipContrast(
+        contrast=int(np.median(picks)),
+        spread=(lo, hi),
+        per_frame=tuple(picks),
+        settled=hi <= lo * SETTLED_RATIO,
+    )
 
 
 def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
