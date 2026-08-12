@@ -322,3 +322,15 @@ def test_the_panes_can_be_resized():
     assert "setProperty" in page, "which writes the width back to the CSS variable that owns it"
     assert 'new Event("resize")' in page, "and tells the renderer to re-read its container"
     assert ".split" in css and "col-resize" in css
+
+
+def test_the_scrubber_does_not_colour_frames_by_a_stale_flag():
+    """`degenerate` belongs to the ORIGINAL per-frame solve, and every camera since copies the list
+    through from its seed. A frame flagged there stayed pink for the rest of the pipeline's life,
+    including after the chain had brought it to 2 px — a strip reporting a property of a solve
+    nobody is looking at."""
+    page = (STATIC / "index.html").read_text()
+    css = (STATIC / "style.css").read_text()
+    build = re.search(r"function buildStrip[\s\S]*?\n\}", page).group(0)
+    assert "cam.degenerate" not in build, "the strip must not colour by the seed's degenerate flag"
+    assert "#strip i.bad" not in css, "and the colour it used must be gone with it"

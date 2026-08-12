@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=17" />
+  <link rel="stylesheet" href="/static/style.css?v=18" />
 </head>
 <body>
 
@@ -303,7 +303,12 @@ function buildStrip(cam) {
   for (let i = 0; i < cam.frames.length; i++) {
     const d = document.createElement("i");
     d.dataset.i = i;
-    d.className = cam.degenerate?.[i] ? "bad" : (cam.focal_px[i] > 0 ? "ok" : "none");
+    // `degenerate` deliberately NOT used. It is set by the original per-frame homography solve and
+    // every camera since copies the list straight through from its seed, so a frame flagged there
+    // stayed marked for the rest of the pipeline's life — including after the chain had brought it
+    // to 2 px. A strip that reports a property of a solve nobody is looking at is worse than a
+    // strip that reports only what it can still vouch for: this frame has a camera, or it does not.
+    d.className = cam.focal_px[i] > 0 ? "ok" : "none";
     d.onclick = () => { playing = false; show(i); };
     s.appendChild(d);
   }

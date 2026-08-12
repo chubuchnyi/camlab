@@ -70,7 +70,10 @@ html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
    to the end to discover it. */
 #strip { display: flex; gap: 1px; height: 16px; flex: 1.4; min-width: 120px; }
 #strip i { flex: 1; min-width: 1px; background: #2f8f4f; cursor: pointer; }
-#strip i.bad  { background: #ff3ea5; }
+/* No third colour. There was a pink `.bad`, fed by the `degenerate` flag of the original per-frame
+   solve, which every later camera copies through from its seed — so it kept marking frames the
+   chain had since fixed. Green means this frame has a camera and grey means it does not, which are
+   the only two things the strip can still vouch for without re-measuring 120 frames on load. */
 #strip i.none { background: #4a4f57; }
 #strip i.now  { outline: 1px solid #fff; outline-offset: -1px; }
 
