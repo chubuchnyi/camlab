@@ -67,7 +67,8 @@ def test_a_supported_verdict_counts_under_20_over_supported_frames_only():
 
 
 def test_no_frame_scored_says_so_rather_than_returning_nan():
-    assert Verdict(np.nan, np.nan, np.nan, 0, 0, 0, 0, 0).line() == "no frame could be scored at all"
+    empty = Verdict(np.nan, np.nan, np.nan, 0, 0, 0, 0, 0)
+    assert empty.line() == "no frame could be scored at all"
 
 
 # ---------------------------------------------------------------------------------------------
