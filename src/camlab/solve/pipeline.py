@@ -60,6 +60,11 @@ REPO = SCRIPTS.parent
 #: Each stage as (label, script, extra args). Run as subprocesses rather than imported: the scripts
 #: are the thing that has been measured, and a second import-shaped path through the same logic is
 #: how two versions of "the pipeline" start to disagree.
+#: Where the run's own starting point is kept when the seed is a file the chain overwrites. One
+#: fixed name rather than a timestamp: what matters is that the last run's input survives its
+#: output, not that every run's does.
+SEED_SNAPSHOT = "camera_seed_used.json"
+
 STAGES = [
     # NOT `--no-hand`. It was hardcoded here, so the viewer's "solve this clip" button threw away
     # the operator's own anchor on every run — the one input the chain most depends on.
@@ -73,6 +78,11 @@ STAGES = [
 ]
 
 
+#: Every camera file the chain writes, read off STAGES so this cannot drift from what it does.
+OUTPUTS = frozenset(extra[extra.index("--out") + 1]
+                    for _label, _script, extra in STAGES if "--out" in extra)
+
+
 def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
         on_progress=None, timeout_s: int = 3600) -> dict:
     """Run every stage. Returns `{stage: last line of its output}` plus `ok` and `camera`.
@@ -81,13 +91,35 @@ def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
     on a broken earlier one is worse than a clear failure, because it produces a camera file that
     looks like every other camera file.
     """
-    out: dict = {"stages": {}, "ok": False, "camera": None}
+    out: dict = {"stages": {}, "ok": False, "camera": None, "seed": seed}
     if not (SCRIPTS / "solve_carry.py").exists():
         out["stages"]["setup"] = (
             f"the stage scripts are not at {SCRIPTS}. Set CAMLAB_SCRIPTS to the directory holding "
             "solve_carry.py, or install from a checkout."
         )
         return out
+    # The viewer sends whichever camera is selected as the seed, and four of the names it can send
+    # are files this chain WRITES. Seeding from `camera_smooth.json` means the last stage overwrites
+    # what the first stage read: a second press compounds on the first with no way back, and the
+    # manual layer — which is keyed by file name — ends up laid over a different solve than the one
+    # it was aimed against. That happened on `CRO_MOR_194948` before anyone noticed.
+    #
+    # Not refused, because re-solving from a refined camera is a real thing to want. Snapshotted:
+    # the run reads a copy, so whatever it overwrites, what it STARTED from is still on disk.
+    if seed in OUTPUTS:
+        from camlab.runs import ClipInfo
+
+        info = ClipInfo.load(clip_id)
+        src = info.dir / seed
+        if src.exists():
+            snap = info.dir / SEED_SNAPSHOT
+            snap.write_text(src.read_text())
+            out["seed"] = seed = SEED_SNAPSHOT
+            out["stages"]["seed"] = (
+                f"seeded from a copy of {src.name} kept as {SEED_SNAPSHOT}, because the chain "
+                f"overwrites {src.name} itself"
+            )
+
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
         if script == "solve_carry.py":

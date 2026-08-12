@@ -39,6 +39,11 @@ Ordered by how much they cost.
   algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
   Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
   below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
+- **The viewer seeds the solve from whichever camera is SELECTED, and four of those names are
+  files the chain writes.** Picking `camera_smooth.json` makes the last stage overwrite what the
+  first stage read: a second press compounds on the first with no way back, and the manual layer —
+  keyed by file name — ends up laid over a different solve than it was aimed against. Happened on
+  `CRO_MOR_194948`. `pipeline.run` now snapshots such a seed to `camera_seed_used.json` first.
 - **The solver never read the viewer's hand edits.** Every edit the panel writes goes to the run's
   `camera_manual.json`; `solve_carry.py` read `calib/<clip>-hand-aligned-*.json`; and
   `solve/pipeline.py` passed `--no-hand` unconditionally, so the "solve this clip" button threw the

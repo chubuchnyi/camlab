@@ -85,3 +85,15 @@ def test_the_pipeline_does_not_force_the_anchor_away():
         "--no-hand is back in the pipeline: the viewer's solve button is discarding the "
         "operator's own anchor on every run"
     )
+
+
+def test_the_chain_knows_which_files_it_overwrites():
+    """The viewer sends whichever camera is selected as the seed, and four of the names it can send
+    are files this chain writes. Seeding from `camera_smooth.json` had the last stage overwrite what
+    the first stage read — a second press compounds on the first with no way back, and the manual
+    layer, which is keyed by file name, ends up over a different solve than it was aimed against."""
+    from camlab.solve.pipeline import OUTPUTS, SEED_SNAPSHOT
+
+    assert "camera_smooth.json" in OUTPUTS, "the chain's last output must be recognised as one"
+    assert "camera_start.json" not in OUTPUTS, "the default seed is not something the chain writes"
+    assert SEED_SNAPSHOT not in OUTPUTS, "the snapshot would be overwritten by the run it records"
