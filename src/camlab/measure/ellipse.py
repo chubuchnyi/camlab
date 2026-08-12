@@ -235,15 +235,30 @@ def predict_conic(h_w2i: np.ndarray, radius: float,
     return c / np.linalg.norm(c)
 
 
-def conic_disagreement(a: np.ndarray, b: np.ndarray, pts: np.ndarray) -> float:
-    """RMS pixel distance from `a`'s curve to `b`'s, sampled at `pts`.
+def conic_disagreement(a: np.ndarray, b: np.ndarray, pts: np.ndarray,
+                       near_px: float = INLIER_PX) -> float:
+    """RMS pixel distance from `a`'s curve to `b`'s, sampled where `a` actually runs.
 
     Comparing conic matrices entry by entry is meaningless — they are defined up to scale and sign,
     and two normalisations of the same curve can differ everywhere. Comparing where the curves
     actually run does not have that problem.
+
+    **`a` used to be ignored entirely**: the body was `_distance(b, pts)`, which is how far the
+    POINTS are from `b` and has nothing to do with `a`. It was caught by the number refusing to
+    move — four completely different fitted ellipses on the same frame all "disagreed" with the
+    same predicted arc by exactly 180.2 px, because none of them was ever consulted.
+
+    `pts` is the pixel population to look in — a paint spine, usually. The points within `near_px`
+    of `a` are where `a` runs; their distance to `b` is the answer. NaN when `a` runs nowhere near
+    any of them, which is a real answer and not a zero.
     """
-    d = _distance(np.asarray(b, float), np.asarray(pts, float))
-    return float(np.sqrt(np.mean(d ** 2)))
+    a = np.asarray(a, float)
+    b = np.asarray(b, float)
+    pts = np.asarray(pts, float)
+    on_a = pts[np.abs(_distance(a, pts)) <= near_px]
+    if len(on_a) < 5:
+        return float("nan")
+    return float(np.sqrt(np.mean(_distance(b, on_a) ** 2)))
 
 
 #: Indices into `core.pitch.pitch_polylines()` of the markings that are NOT straight — the centre

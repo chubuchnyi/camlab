@@ -89,6 +89,16 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **`camera_manual.json` was written non-atomically from five places and got corrupted.**
+  `runs/g15449383/camera_manual.json` was found holding a complete JSON object followed by a stray
+  `}` — two writers interleaving — and it holds the one thing in this project that cannot be
+  recomputed. Four routes plus the background solve thread each did a plain read-modify-
+  `write_text`. Now `_write_manual`: temp file in the same directory, `os.replace`, under a lock.
+- **`conic_disagreement(a, b, pts)` ignored `a` entirely.** Its body was `_distance(b, pts)` — how
+  far the POINTS are from `b` — while its docstring promised the distance between two curves. Four
+  completely different fitted ellipses on one frame all "disagreed" with the same predicted arc by
+  exactly 180.2 px, which is what gave it away. Validated after the repair against circles 20 px
+  apart, which is the rule this repo already carries and I had not applied to it.
 - **Hough returns several straight chords of one arc, and they look like several markings.** On
   `broadcast` frame 0 three of the four second-family detections are all the near penalty arc —
   marking 22, 16.9 m of path across a 14.6 m chord. The 2+2 correspondence generator then has one

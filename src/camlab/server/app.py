@@ -17,6 +17,7 @@ Run:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -98,6 +99,36 @@ def _default_camera(info) -> str:
         if name in have:
             return name
     return have[0]
+
+
+def _write_manual(path, blob) -> None:
+    """Write `camera_manual.json` atomically, under a lock.
+
+    It holds the operator's own alignment — the thing that cannot be recomputed — and it was
+    written with a plain `write_text` from four routes plus a background solve thread. One copy on
+    disk was found corrupt: `runs/g15449383/camera_manual.json` held a complete JSON object
+    followed by a stray `}`, which is two writers interleaving. The data was recoverable that time.
+
+    Temp file in the same directory, then `os.replace`, which is atomic on POSIX: a reader sees
+    either the old file or the new one and never a half of each. The lock is because these routes
+    read-modify-write, and two of them racing lose one edit even with atomic writes.
+    """
+    import json
+    import os
+    import tempfile
+
+    with _MANUAL_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".camera_manual.", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(blob, fh, indent=1)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
 
 def _load_camera(info, which: str) -> dict:
@@ -434,6 +465,9 @@ def write_start_camera(info) -> Path:
     )
 
 
+#: Guards the read-modify-write of `camera_manual.json`. See `_write_manual`.
+_MANUAL_LOCK = threading.Lock()
+
 #: One solve at a time per clip, and its progress. In memory: a solve that a restart interrupts has
 #: not half-written anything, since each stage writes its own camera file only on success.
 _SOLVES: dict[str, dict] = {}
@@ -511,7 +545,7 @@ def flip(clip_id: str, which: str = "camera_auto.json") -> dict:
         edits[str(i)] = {"focal_px": cam["focal_px"][i],
                          "rotation": rodrigues_from_matrix(rot).tolist(),
                          "position": [-x, -y, z]}
-    path.write_text(json.dumps(blob, indent=1))
+    _write_manual(path, blob)
     return {"ok": True, "flipped_frames": len(cam["frames"]), "which": which}
 
 
@@ -579,7 +613,7 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
             "rotation": [float(v) for v in np.asarray(r.rotation).ravel()],
             "position": [float(v) for v in np.asarray(r.position).ravel()],
         }
-        path.write_text(json.dumps(blob, indent=1))
+        _write_manual(path, blob)
 
     yaw, elev, roll = angles_from_rotation(matrix_from_rodrigues(np.asarray(r.rotation, float)))
     # "Nothing to fit to" and "already the best fit" are the same `moved: false` and completely
@@ -667,7 +701,7 @@ def manual_set(clip_id: str, n: int, body: dict) -> dict:
         else:
             base_r, base_f = prev["rotation"], prev["focal_px"]
         edits[str(i)] = {"focal_px": base_f, "rotation": list(base_r), "position": pos}
-    path.write_text(json.dumps(blob, indent=1))
+    _write_manual(path, blob)
     return {"ok": True, "edited_frames": len(edits), "scope": scope,
             "displaced_hand_positions": displaced,
             "backup": "camera_manual.bak.json" if scope != "frame" else None}
@@ -690,7 +724,7 @@ def manual_clear(clip_id: str, n: int, which: str = "camera_auto.json",
     else:
         edits = {}
     blob[which] = edits
-    path.write_text(json.dumps(blob, indent=1))
+    _write_manual(path, blob)
     return {"ok": True, "edited_frames": len(edits)}
 
 

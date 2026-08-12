@@ -139,3 +139,32 @@ def test_the_chain_knows_which_files_it_overwrites():
     assert "camera_smooth.json" in OUTPUTS, "the chain's last output must be recognised as one"
     assert "camera_start.json" not in OUTPUTS, "the default seed is not something the chain writes"
     assert SEED_SNAPSHOT not in OUTPUTS, "the snapshot would be overwritten by the run it records"
+
+
+def test_the_manual_file_is_written_atomically(tmp_path):
+    """It holds the one thing that cannot be recomputed. A plain `write_text` from four routes plus
+    a background solve thread left `runs/g15449383/camera_manual.json` holding a complete JSON
+    object followed by a stray `}` — two writers interleaving. Recoverable that time."""
+    import threading
+
+    from camlab.server.app import _write_manual
+
+    path = tmp_path / "camera_manual.json"
+    big = {"c.json": {str(i): dict(AIM) for i in range(200)}}
+    small = {"c.json": {"0": dict(AIM)}}
+
+    def hammer(blob, n):
+        for _ in range(n):
+            _write_manual(path, blob)
+
+    threads = [threading.Thread(target=hammer, args=(big, 40)),
+               threading.Thread(target=hammer, args=(small, 40))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Whatever won, it must be one of the two whole documents and never a splice of both.
+    got = json.loads(path.read_text())
+    assert got in (big, small), "a reader saw half of one write and half of another"
+    assert not list(tmp_path.glob(".camera_manual.*")), "a temp file was left behind"
