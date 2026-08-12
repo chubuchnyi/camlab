@@ -7,60 +7,62 @@ the video: project the pitch model through it and the lines must land on the pai
 
 Everything else — poses, physics, rendering, the generative tail — stays in `pitch3d`.
 
-## Why this exists
+**Read [`docs/STATUS.md`](docs/STATUS.md) first.** It is what is true right now, and this file is
+only the way in.
 
-`pitch3d` solves each frame's calibration as a free 8-DOF homography with nothing tying the frames
-to one camera. On a tripod clip that is tolerable. On a phone clip from the stands the pitch plane
-slides **0.899 m per frame** under every player, which reads as a storm of footballers and makes the
-scene unjudgeable by eye.
+## Where it stands
 
-Measured 2026-08-10 ([`docs/findings/m1-fixed-centre.md`](docs/findings/m1-fixed-centre.md)): fixing the camera
-**position** for the whole clip costs 0.90–1.23× against those free homographies while placing
-37–64 % *more* of the pitch in frame. Fixing the **focal** as well costs 1.5–2.1×, because the clip
-zooms 1.66×. So: one position, one shared intrinsic, a per-frame focal curve, a per-frame rotation.
+| clip | worst line, median | frames under 20 px | camera movement between frames |
+|---|---|---|---|
+| `fan` — 1080×608, a phone from the stands, floodlit night | **2.11 px** | **120/120** | 0.00 m |
+| `broadcast` — 1920×1080, professional | **3.98 px** | 59/60 | 0.00 m |
 
-Full spec: [`docs/spec.md`](docs/spec.md). The measurement it rests on:
-[`docs/findings/m1-fixed-centre.md`](docs/findings/m1-fixed-centre.md).
+On `broadcast`, camlab's camera lands **2.06 m** from pitch3d's, which was fitted from PnLCalib
+keypoints by a completely different route, with the focals agreeing to 1.1 % — and camlab scores
+better against the paint, 3.98 px against 9.49. That is the only external check this project has;
+everything else is camlab against camlab or camlab against an eye.
 
-## Status
-
-| | | |
-|---|---|---|
-| M-1 | is a fixed camera position defensible for handheld? | **done** — yes |
-| **M0** | repo, container, port, UI shows the pitch | **done** — served from the box 2026-08-10 |
-| **M1** | clip in → today's free homography → camera, frustum, trajectory, frame plane, camera view | **done** 2026-08-10 |
-| M1.5 | take PnLCalib's camera directly instead of collapsing it to a homography | |
-| M2 | the PTZ model: one position, per-frame rotation, smooth focal | the point of the repo |
-| M3 | hand controls, `camera_manual.json`, live reprojection error | |
-| M4 | skeletons, ball, per-layer and per-player hiding | |
+`fan` used one hand-aligned frame as its anchor. With no human at all the same chain reaches
+7.75 px and 100 of 120 frames. The whole difference is the seed, and getting one automatically is
+the main thing still open — see **#11** in `docs/STATUS.md`.
 
 ## Use it
 
-```bash
-# any mp4; the crop is the rect the calibration was solved in
-python -m camlab ingest fan --video /path/to/clip.mp4 --crop 1080 608 0 1294 --frames 120
+Everything below is also a button in the viewer.
 
-# M1 reads its homographies from an upstream pitch3d scene. M2 solves them here instead,
-# at which point this flag goes away.
-python -m camlab solve  fan --scene /path/to/pitch3d/out/<run>/scene.json
-python -m camlab list
+```bash
+# upload an mp4 in the UI, or:
+python -m camlab ingest myclip --video /path/to/clip.mp4 --frames 60
+
+# a labelled default camera to drag from — stands, looking at the centre spot, 22 deg of horizontal
+# field of view. Nothing in it is measured; the file says is_default: true.
+.venv/bin/python scripts/start_camera.py myclip
+
+# align ONE frame by eye in the viewer, then:
+.venv/bin/python scripts/solve_carry.py        myclip --anchor 12 --seed camera_start.json \
+                                                      --free-position --out camera_carry.json
+.venv/bin/python scripts/solve_selfheal.py     myclip --from camera_carry.json  --out camera_healed.json
+.venv/bin/python scripts/solve_shared_centre.py myclip --from camera_healed.json --out camera_fixed.json
+.venv/bin/python scripts/smooth_camera.py      myclip --from camera_fixed.json  --out camera_smooth.json
 ```
 
-`solve` is M1's control side: **each frame decomposed from its own free 8-DOF homography, at its
-own best focal.** It is not one camera and is not meant to be — the spread of the recovered
-positions IS the ground swim, drawn in metres. On the fan clip: 120/120 frames, median 6.4 m from
-the median position, worst 82.3 m. One camera would read 0.0 m for both.
+Judging a camera:
 
-Window B is the verdict. On frame 0 the projected goal frame lands on the real one — the goals are
-the only geometry with height, so they are what checks the focal. By frame 60 it is ~70 px out.
-That variation, frame by frame, is what M2 exists to remove.
+```bash
+.venv/bin/python scripts/bench_metric_ceiling.py myclip camera_smooth.json 3   # against the paint
+.venv/bin/python scripts/check_stripes.py        myclip --camera camera_smooth.json
+```
+
+The second one is the check that never touches the markings: mowing stripes are evenly spaced in
+metres, so through a right camera their period holds while the operator zooms. On `fan` it holds at
+11.00 m ± 2.3 % across a 1.61× zoom.
 
 ## Run it
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest
-.venv/bin/uvicorn camlab.server.app:app --port 8000     # -> http://localhost:8000
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev,cv]"
+.venv/bin/python -m pytest                                   # 89 tests, ~6 s
+.venv/bin/uvicorn camlab.server.app:app --port 8000          # -> http://localhost:8000
 ```
 
 ```bash
@@ -71,44 +73,46 @@ docker run --rm -p 8000:8000 -v "$PWD/runs:/runs" camlab:m0
 ## On the GPU box
 
 ```bash
-bash scripts/deploy.sh          # pack -> ship -> build in WSL -> run detached -> tunnel
-                                # then open http://localhost:8100
+bash scripts/deploy.sh          # pack HEAD -> ship -> build in WSL -> run detached -> tunnel
+bash scripts/tunnel.sh          # just the tunnel, when it drops. --watch keeps it up.
 ```
 
-**Access is an ssh tunnel, not an open port.** WSL's localhost forwarding does not reach this
-container — measured 2026-08-10, Windows `127.0.0.1:8000` returns 000 while the WSL IP `:8000`
-returns 200 — so the alternative would be `netsh interface portproxy` plus a firewall rule. The
-tunnel needs neither, exposes nothing to the LAN, and survives the thing a portproxy does not: the
-**WSL IP is dynamic and changes when the VM restarts**, so a rule pinned to it silently stops
-working. `deploy.sh` re-reads the IP every time.
+`deploy.sh` ships **HEAD, not the working tree**. Deploy after committing, and check what the box
+actually serves rather than trusting a green deploy — a control was once deployed before it was
+committed and reported missing by the person looking at it.
 
-The container runs `-d --restart unless-stopped`, not `--rm`: WSL kills anything whose launching
-`wsl.exe` has exited, so the server has to be owned by dockerd.
+**Access is an ssh tunnel, not an open port.** WSL's localhost forwarding does not reach the
+container, so the alternative is `netsh interface portproxy` plus a firewall rule. The tunnel needs
+neither, exposes nothing to the LAN, and survives the thing a portproxy does not: the WSL IP is
+dynamic and changes when the VM restarts.
+
+**The WSL VM sleeps when nothing is attached**, taking dockerd with it — every probe wakes it, it
+answers, and it sleeps again, so the box reads alive from a shell and dead from a browser.
+`tunnel.sh` holds a `wsl.exe` process open to prevent that.
 
 ## Two rules it keeps
 
 **No CDN.** three.js is vendored under `src/camlab/server/static/vendor/` with checksums, and a
-test fails if any served file reaches the network. The target box runs behind a link that resets
-every ~250 MB and is reached only over ssh; a page that fetches its renderer at load time is a page
-that does not open.
+test fails if any served file reaches the network. The box runs behind a link that resets every
+~250 MB and is reached only over ssh; a page that fetches its renderer at load time does not open.
 
-**The browser never posts a matrix.** It posts a gesture or a few scalars; the server derives the
-transform. A raw 3×3 from a client can express things that are not a camera, and then "one camera"
-stops being a guarantee.
+**The browser never posts a matrix.** It posts a gesture or a few scalars and the server derives the
+transform. This survived adding a rotation gizmo: the gizmo derives the three angles the server
+speaks — with roll read in the level basis, verified against the server to 1e-16 degrees — and
+sends those.
 
 ## What can be trusted here
 
-**camlab's ground truth is the video, not pitch3d's outputs.** Every number inherited from pitch3d
-is a claim until a camlab test measures it against pixels. That is not a posture — in one session
-on this thread, an inherited headline number turned out to be measured in the wrong image space, an
-inherited "this knob was never on" turned out to be on by default at all three layers, and an
-inherited "novel view does not exist for handheld footage" turned out to rest on an analogy rather
-than a measurement, and was refuted.
+**camlab's ground truth is the video, not pitch3d's outputs**, and not its own earlier conclusions.
+This thread has retracted a great deal of its own work on measurement: a metric that could not
+report an error larger than 40 px, an overlap test that discarded exact matches, a "not radial"
+argument computed about the wrong centre, a pincushion signature that was seven samples of noise, a
+boundary hit reported as an optimum twice, and three separate ideas for telling markings from
+mowing stripes that measurement refuted.
 
-The register of what was inherited and what has actually been checked is
-[`docs/inherited-claims.md`](docs/inherited-claims.md). Short version today: the geometry is
-verified against a real measurement, the calibration it is fed is only verified to 8 px against
-the painted lines, and the thresholds are not verified at all.
+The register of traps is [`docs/findings/landmines.md`](docs/findings/landmines.md) and it is the
+one place they go. What was inherited from upstream and whether it has been checked is
+[`docs/inherited-claims.md`](docs/inherited-claims.md).
 
 ## Layout
 
@@ -116,23 +120,26 @@ the painted lines, and the thresholds are not verified at all.
 src/camlab/
   core/      pure numpy: pitch model, camera types, plane->camera recovery, projection
   measure/   the paint in the frame, and how far a camera is from it — the ground truth
-  solve/     per-frame cameras today; the PTZ model at M2
+             lines, line_error, residual, ellipse (the arcs), stripes (the turf), pixel_motion
+  solve/     carry, refit (Nelder-Mead and Levenberg-Marquardt), bootstrap, per_frame, pipeline
   io/        video in, frames and clip.json out; reading an upstream scene
   server/    FastAPI + a vendored three.js viewer, no CDN, no build step
+scripts/     every stage as a CLI, and the benches the findings cite
 docs/
-  spec.md              what this is, why, and the plan
-  findings/            measurements made here
-  inherited-claims.md  what came from upstream and whether it has been checked
+  STATUS.md            what is true right now — start here
+  PROBLEM.md           the problem stated for someone who has not seen this repo
+  findings/            measurements made here, including the refutations
+  findings/landmines.md  traps that have already cost time
+  archive/             superseded, kept for the record
 tests/     against real captured data wherever possible, not against fakes
 ```
 
 ## Relationship to pitch3d
 
 camlab is **self-contained**: it installs, tests, runs and deploys without pitch3d present. What
-came from there is a **copy**, not a dependency — the camera contract itself has
-to change here (`CameraTrack` holds one intrinsic for a whole clip, so a zoom is not representable).
+came from there is a **copy**, not a dependency — the camera contract itself had to change here,
+since `CameraTrack` holds one intrinsic for a whole clip and a zoom is not representable in it.
 Each copied file carries a header saying where it came from. Do not hand-sync them back.
 
-The transfer format in both directions is `calib/<clip>.npz` — `focal, centre, rvecs, frames,
-world_to_image`. `tests/test_golden_real_camera.py` pins the copy against the same real measurement
-`pitch3d` pins: focal 4169.32 px, one optical centre for 60 frames at (−2.29, −70.13, 17.22) m.
+`tests/test_golden_real_camera.py` pins the copy against the same real measurement pitch3d pins:
+focal 4169.32 px, one optical centre for 60 frames at (−2.29, −70.13, 17.22) m.

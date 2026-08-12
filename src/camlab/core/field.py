@@ -29,7 +29,8 @@ from .units import FieldDimensions
 #: write exactly ``0.0`` on a frame they could not solve ("carry last good, but flag zero
 #: confidence"), so this is a "was it solved at all" test, not a quality bar. Un-projecting a foot
 #: through a carried homography is what put roots 3 km apart and a subject at 100 416 m/s on the
-#: vertical fan clip (findings/open-items-2026-08-01.md §3.3): the plane is stale by tens of frames
+#: vertical fan clip (pitch3d's own open-items-2026-08-01.md §3.3, upstream and not in this repo):
+#: the plane is stale by tens of frames
 #: of zoom, and near the wrong horizon a pixel is kilometres.
 MIN_SOLVED_CONFIDENCE = 0.02
 
