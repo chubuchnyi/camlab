@@ -89,6 +89,13 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **Distance between optical centres is not distance between cameras.** Every "the pool holds a
+  hypothesis N metres from the truth" number in this project's #11 work was measured that way, and
+  on `broadcast` frame 0 the hypothesis whose centre sits **3.83 m** from the truth carries a focal
+  of **20000** — pinned at the upper bound, +355 % — and matches **zero** lines. Its centre is
+  close and the camera is nothing like the truth. A camera is position, orientation and focal at
+  once; compare where two of them put the same pitch, in pixels.
+  (`bench_bootstrap_gates.reprojection_gap`)
 - **A spurious line costs nothing on a solved clip and everything in the bootstrap.** #14's
   precision half was measured against the residual on `fan` and `broadcast`, found worthless, and
   parked — but on a solved clip the camera is already right and a non-marking changes nothing.

@@ -30,7 +30,11 @@ from camlab.core.angles import rodrigues_from_matrix  # noqa: E402
 from camlab.measure.ellipse import arc_paint_distance  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.paint import centreline_pixels, paint_masks  # noqa: E402
-from camlab.measure.residual import frame_residual, world_to_image  # noqa: E402
+from camlab.measure.residual import (  # noqa: E402
+    _marking_samples,
+    frame_residual,
+    world_to_image,
+)
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.bootstrap import hypotheses  # noqa: E402
 from camlab.solve.refit import refit_frame_lm  # noqa: E402
@@ -45,6 +49,30 @@ MIN_SAMPLES = 100
 FOCAL_RANGE = (900.0, 12000.0)
 HEIGHT_RANGE = (5.0, 45.0)
 GROUND_RANGE = (35.0, 140.0)
+
+
+def reprojection_gap(truth_h, cand_h, samples, width, height) -> float:
+    """How far apart two cameras put the SAME pitch, in pixels. The only honest "near the truth".
+
+    Distance between optical centres is not it, and using it cost a wrong conclusion: on
+    `broadcast` frame 0 the hypothesis whose centre sits 3.83 m from the truth carries a focal of
+    20000 — pinned at the upper bound, +355 % — and matches zero lines. Its centre is close and the
+    camera is nothing like the truth. A camera is three things at once and only its projection
+    tests all of them.
+
+    Median over the pitch samples the TRUTH puts inside the frame, so a candidate cannot score well
+    by projecting almost nothing.
+    """
+    q = samples @ truth_h.T
+    w = np.where(np.abs(q[:, 2]) > 1e-9, q[:, 2], 1e-9)
+    a = q[:, :2] / w[:, None]
+    inside = (a[:, 0] > 0) & (a[:, 0] < width) & (a[:, 1] > 0) & (a[:, 1] < height)
+    if not inside.any():
+        return float("nan")
+    q2 = samples[inside] @ cand_h.T
+    w2 = np.where(np.abs(q2[:, 2]) > 1e-9, q2[:, 2], 1e-9)
+    b = q2[:, :2] / w2[:, None]
+    return float(np.median(np.hypot(*(b - a[inside]).T)))
 
 
 def plausible(focal, position) -> bool:
@@ -108,7 +136,11 @@ def main() -> None:
         # The closest candidate to the truth is tracked separately, because the funnel alone cannot
         # say whether the gates are wrong or the pool is empty. If the nearest thing the generator
         # produced is 12 m out, no gate is at fault; if it is 3 m out and rejected, one is.
-        want = np.asarray(truth["position"][a], float) if truth is not None else None
+        want = None
+        if truth is not None and truth["focal_px"][a] > 0:
+            want = world_to_image(truth["focal_px"][a], truth["rotation"][a],
+                                  truth["position"][a], info.width, info.height, cx=cx, cy=cy)
+        samples = _marking_samples()
         counts: dict[str, int] = {}
         best = (np.inf, None)
         n_gen = 0
@@ -122,19 +154,24 @@ def main() -> None:
             v, why = gates(info, a, r.focal_px, r.rotation, r.position, cx, cy, tree)
             counts[v] = counts.get(v, 0) + 1
             if want is not None:
-                d = float(np.linalg.norm(np.asarray(r.position, float) - want))
-                if d < best[0]:
-                    best = (d, (v, why, float(r.focal_px)))
+                ch = world_to_image(r.focal_px, r.rotation, r.position,
+                                    info.width, info.height, cx=cx, cy=cy)
+                d = reprojection_gap(want, ch, samples, info.width, info.height)
+                if np.isfinite(d) and d < best[0]:
+                    best = (d, (v, why, float(r.focal_px),
+                                float(np.linalg.norm(np.asarray(r.position, float)
+                                                     - np.asarray(truth["position"][a], float)))))
 
         print(f"   {n_gen} hypotheses generated. Where they end up:")
         for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
             print(f"      {k:24s} {v:6d}  {v / max(n_gen, 1):5.1%}")
         if best[1] is not None:
-            v, why, f = best[1]
+            v, why, f, dm = best[1]
             tf = truth["focal_px"][a]
-            print(f"   closest to the truth: {best[0]:.1f} m, focal {f:.0f} against {tf:.0f} "
-                  f"({(f - tf) / tf:+.0%}) — {'kept' if v == 'kept' else 'REJECTED by the ' + v}"
-                  f", {why}")
+            print(f"   closest to the truth: it puts the pitch {best[0]:.1f} px from where the "
+                  f"truth does (centre {dm:.1f} m away, focal {f:.0f} against {tf:.0f}, "
+                  f"{(f - tf) / tf:+.0%})")
+            print(f"      -> {'kept' if v == 'kept' else 'REJECTED by the ' + v}, {why}")
         if not counts.get("kept"):
             print("      NOTHING SURVIVES — and the line above says which gate to argue with.")
 
