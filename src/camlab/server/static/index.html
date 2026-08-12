@@ -13,7 +13,7 @@
     }
   }
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=16" />
+  <link rel="stylesheet" href="/static/style.css?v=17" />
 </head>
 <body>
 
@@ -29,6 +29,7 @@
 
     <!-- Window B. The <img> is the evidence and the canvas is transparent over it, so nothing in
          the 3D pipeline can resample or tint the frame on its way to the eye. -->
+    <div class="split" id="split-b" title="drag to resize"></div>
     <div id="bwrap">
       <div class="caption">
         what the solved camera sees — <b>the verdict is here</b>:
@@ -58,12 +59,19 @@
           </select>
         </label>
         <label title="drag on the frame to measure"><input type="checkbox" id="T-ruler" /> ruler</label>
+      </div>
+      <!-- The numbers live on their OWN row, at a fixed height. They used to sit in the toolbar
+           above, which wraps: a full readout pushed it to three lines and an empty one collapsed
+           it to one, so every frame change resized the toolbar, `#bstage` recentred in what was
+           left, and the photograph jumped under the cursor. Nothing here may change height. -->
+      <div id="breadout">
         <span class="num" id="rulerout"></span>
         <span class="num muted" id="lineout"></span>
       </div>
     </div>
   </div>
 
+  <div class="split" id="split-p" title="drag to resize"></div>
   <aside id="panel">
     <h2>Clip</h2>
     <select id="clip"></select>
@@ -764,6 +772,42 @@ $("u-go").onclick = async () => {
     btn.textContent = was;
   }
 };
+
+// Draggable pane borders. The widths live on :root as CSS variables so the layout stays
+// declarative and there is one place that owns them; three.js is told to re-read its container
+// through the resize event it already listens for.
+for (const [id, varName, fromRight] of [["split-b", "--bw", true], ["split-p", "--panel", true]]) {
+  const el = $(id);
+  if (!el) continue;
+  el.onpointerdown = (ev) => {
+    ev.preventDefault();
+    el.setPointerCapture(ev.pointerId);
+    el.classList.add("dragging");
+    document.body.classList.add("resizing");
+    const move = (e) => {
+      // Measured from the right edge for both, since both panes are on that side. Bounds keep the
+      // 3D view from being squeezed to nothing, which cannot be undone by dragging back.
+      const panel = id === "split-p"
+        ? window.innerWidth - e.clientX
+        : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--panel"));
+      let px = fromRight ? window.innerWidth - e.clientX : e.clientX;
+      if (id === "split-b") px -= panel;
+      px = Math.max(160, Math.min(px, window.innerWidth - 320));
+      document.documentElement.style.setProperty(varName, px + "px");
+      window.dispatchEvent(new Event("resize"));
+    };
+    const up = (e) => {
+      el.releasePointerCapture(ev.pointerId);
+      el.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+      el.onpointermove = null;
+      el.onpointerup = null;
+      window.dispatchEvent(new Event("resize"));
+    };
+    el.onpointermove = move;
+    el.onpointerup = up;
+  };
+}
 
 (async function main() {
   try {

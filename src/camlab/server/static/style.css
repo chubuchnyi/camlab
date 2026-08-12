@@ -106,10 +106,30 @@ html, body { margin: 0; height: 100%; background: #14161a; color: #d7dae0;
 #bsvg .ruler { stroke: #fff; stroke-width: 2; stroke-dasharray: 6 4; }
 #bsvg .rlbl  { fill: #fff; font: 600 16px system-ui, sans-serif; paint-order: stroke;
                stroke: #000; stroke-width: 4px; }
+/* NOTHING in this column may change height. `#bstage` sits between the caption and these rows with
+   `margin: auto 0`, so a row that grows by a line re-centres the photograph — which is exactly what
+   happened: the readouts lived in the toolbar, the toolbar wraps, a full readout made it three
+   lines and an empty one made it one, and the frame jumped on every scrub. Fixed heights, no wrap,
+   and anything too long scrolls sideways instead of pushing the picture around. */
 #btools { display: flex; align-items: center; gap: 12px; padding: 6px 10px; font-size: 11px;
-          border-top: 1px solid #2b2f36; color: #8b929e; flex-wrap: wrap; }
-#btools label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+          border-top: 1px solid #2b2f36; color: #8b929e;
+          flex-wrap: nowrap; overflow-x: auto; height: 30px; box-sizing: border-box;
+          flex: 0 0 auto; scrollbar-width: none; }
+#btools::-webkit-scrollbar { display: none; }
+#btools label { display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+#breadout { height: 26px; box-sizing: border-box; flex: 0 0 auto; display: flex; gap: 12px;
+            align-items: center; padding: 0 10px; font-size: 11px; color: #8b929e;
+            white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+            border-top: 1px solid #22262c; }
+#breadout::-webkit-scrollbar { display: none; }
 #rulerout { color: #fff; }
+
+/* Draggable dividers. The three panes are a 3D view, the photograph, and the numbers, and which of
+   them needs the space depends entirely on what is being looked at — a fixed 34vw was a guess. */
+.split { flex: 0 0 6px; cursor: col-resize; background: #2b2f36; position: relative; z-index: 3; }
+.split:hover, .split.dragging { background: #4a90d9; }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe, body.resizing canvas { pointer-events: none; }
 
 /* The paint mask sits between the photograph and the vector overlay: it is evidence, so it goes
    under anything drawn, and it is hidden by default because it is dense. */

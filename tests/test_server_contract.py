@@ -290,3 +290,35 @@ def test_the_image_ships_the_scripts_the_server_runs():
     assert "COPY scripts/" in docker, "the image must carry the scripts the server shells out to"
     for _label, script, _extra in STAGES:
         assert (SCRIPTS / script).exists(), f"{script} is named by the pipeline and missing"
+
+
+def test_nothing_in_window_b_changes_height_when_the_numbers_change():
+    """The photograph jumped on every scrub, and this is why.
+
+    `#bstage` sits in a flex column with `margin: auto 0`, so it re-centres in whatever height the
+    rows below leave it. The readouts used to live in `#btools`, which wraps: a full readout made
+    the toolbar three lines and an empty one made it one. Both rows are now fixed height with no
+    wrap, and anything too long scrolls sideways rather than pushing the picture around.
+    """
+    css = (STATIC / "style.css").read_text()
+    page = (STATIC / "index.html").read_text()
+
+    assert 'id="breadout"' in page, "the numbers need their own row"
+    tools = re.search(r"#btools \{[^}]*\}", css).group(0)
+    assert "flex-wrap: nowrap" in tools, "the toolbar must not wrap"
+    assert re.search(r"height:\s*\d+px", tools), "and must have a fixed height"
+    readout = re.search(r"#breadout \{[^}]*\}", css).group(0)
+    assert re.search(r"height:\s*\d+px", readout), "so must the readout row"
+    assert "nowrap" in readout
+
+
+def test_the_panes_can_be_resized():
+    """A fixed 34vw for the photograph was a guess, and which pane needs the space depends on what
+    is being looked at."""
+    page = (STATIC / "index.html").read_text()
+    css = (STATIC / "style.css").read_text()
+    assert 'id="split-b"' in page and 'id="split-p"' in page
+    assert "onpointerdown" in page, "the dividers need a drag handler"
+    assert "setProperty" in page, "which writes the width back to the CSS variable that owns it"
+    assert 'new Event("resize")' in page, "and tells the renderer to re-read its container"
+    assert ".split" in css and "col-resize" in css
