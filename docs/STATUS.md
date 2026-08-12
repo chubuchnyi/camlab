@@ -11,9 +11,9 @@ projected pitch lands on the painted one.
 
 | clip | **across** | worst line | worst spot | markings | no paint across | under 20 px |
 |---|---|---|---|---|---|---|
-| `fan` (1080×608, phone, stands, floodlit night) | **1.98 px** | 1.69 px | 14.75 px | 6 | 4 % | 120/120 |
-| `broadcast` (1920×1080, professional) | **3.02 px** | 2.75 px | 12.72 px | 7 | 1 % | 60/60 |
-| `g15449383` (1920×1080) | 3.87 px | 2.92 px | 72.60 px | **2** | **21 %** | not a verdict |
+| `fan` (1080×608, phone, stands, floodlit night) | **1.82 px** | 1.65 px | 15.54 px | 6 | 2 % | 120/120 |
+| `broadcast` (1920×1080, professional) | **2.96 px** | 2.75 px | 12.14 px | 7 | 1 % | 60/60 |
+| `g15449383` (1920×1080) | 4.47 px | 3.49 px | 72.60 px | **2** | **21 %** | not a verdict |
 
 **Read the markings column first.** Every error here is a max over the markings a frame scores, so
 on a frame holding two of them it is a max over two. The third clip was called solved on the
@@ -111,7 +111,16 @@ Everything lands in `camera_manual.json`, laid over the solve, which is never re
 Length is a filter, not a discriminator: 39 % of non-markings still get through. Cheap geometric
 signals are exhausted.
 
-**And as of 2026-08-12 it has no measured payoff left on the clips that are on disk**
+**Its recall half found one real thing and it is fixed** (2026-08-12). The "centreline" was the
+local maxima of a distance transform, which is not a thinning algorithm and does not preserve
+connectivity: on `fan` frame 0 the paint mask has 854 connected components and that test returned
+**1823**, cutting connected bands into pieces, longest run 184 px inside a 3408 px band. Replaced
+with Zhang-Suen thinning, which returns 846 — the mask's own count. `g11710897` goes from **2 lines
+a frame to 5**, and two is below `refit.MIN_MATCHED`, so that clip could not be fitted at all
+before and can be now. `fan` gaps 4 % → 2 %, across 1.98 → 1.82. `g15449383` gets worse (3.82 →
+4.47) and scores two markings, so by this file's own rule that is not a verdict either way.
+
+**The precision half has no measured payoff left on the clips that are on disk**
 (`findings/14-has-nothing-left-to-buy-on-these-clips-2026-08-12.md`). Recall is 4 % on `fan` and
 1 % on `broadcast`; `g15449383` scores two markings because only three reach the frame and one of
 those never reaches the grass, which no detector can fix. The clips whose line counts exploded —

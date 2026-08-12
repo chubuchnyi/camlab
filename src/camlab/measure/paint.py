@@ -245,12 +245,87 @@ def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return ridge, val, surface
 
 
-def distance_from_mask(lines: np.ndarray) -> np.ndarray:
-    """Distance to the painted CENTRELINE, from a boolean paint mask."""
+#: How many thinning passes before giving up. A painted band is 2-14 px wide here and each pass
+#: peels one pixel from each side, so anything real converges in single figures; the cap exists so
+#: a pathological mask cannot spin.
+THIN_MAX_PASSES = 32
+
+
+def thin(mask: np.ndarray, max_passes: int = THIN_MAX_PASSES) -> np.ndarray:
+    """Zhang-Suen thinning: the paint mask reduced to a **connected** one-pixel centreline.
+
+    This replaced a local-maximum test on the distance transform — `inner >= dilate(inner)` — which
+    is not a thinning algorithm and does not preserve connectivity. Measured on `fan` frame 0: the
+    mask has 854 connected components and that test returned **1823**, so it was cutting connected
+    bands into pieces, and its longest run was 184 px against a 3408 px band. Zhang-Suen returns
+    846 — the mask's own count, because preserving connectivity is what it is for — and a longest
+    run of 979 px. On frame 40 the longest run goes 68 px to 734.
+
+    What that buys, measured end to end:
+
+    | clip | lines/frame | total line px | worst line | across | gaps |
+    |---|---|---|---|---|---|
+    | `fan` | 9 -> 9 | 3640 -> 3667 | 1.72 -> **1.69** | 1.98 -> **1.84** | 4% -> **2%** |
+    | `broadcast` | 7 -> 7 | 3162 -> 3234 | 2.42 -> **2.38** | 2.89 -> **2.60** | 1% -> 1% |
+    | `g11710897` | **2 -> 5** | **332 -> 715** | | | |
+    | `g14604660` | 6 -> 7 | 2924 -> 3070 | | | |
+    | `g15449383` | 1 -> 1 | 952 -> 915 | 2.72 -> 3.47 | 3.82 -> 4.50 | 22% -> 22% |
+
+    `g11710897` is the one that matters: it is unsolved, and at two lines a frame it is below
+    `refit.MIN_MATCHED` and cannot be fitted at all. Five can.
+
+    `g15449383` gets worse and is reported rather than buried. It scores **two markings**, so by
+    this repo's own `MIN_SUPPORTING_MARKINGS` its errors are a max over two and are not a verdict —
+    they are not allowed to decide this either way.
+
+    Costs about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip.
+    """
+    b = mask.astype(np.uint8)
+    if not b.any():
+        return b.astype(bool)
+    b = b.copy()
+    for _ in range(max_passes):
+        changed = False
+        for step in (0, 1):
+            p = np.pad(b, 1)
+            # P2..P9 in Zhang-Suen's order, clockwise from north. The order is the algorithm: `a`
+            # below counts 0->1 transitions around the ring, and a different order counts something
+            # else and deletes pixels that hold a curve together.
+            nb = [p[0:-2, 1:-1], p[0:-2, 2:], p[1:-1, 2:], p[2:, 2:],
+                  p[2:, 1:-1], p[2:, 0:-2], p[1:-1, 0:-2], p[0:-2, 0:-2]]
+            count = sum(nb)
+            ring = nb + [nb[0]]
+            a = sum(((ring[i] == 0) & (ring[i + 1] == 1)).astype(np.uint8) for i in range(8))
+            if step == 0:
+                ok = (nb[0] * nb[2] * nb[4] == 0) & (nb[2] * nb[4] * nb[6] == 0)
+            else:
+                ok = (nb[0] * nb[2] * nb[6] == 0) & (nb[0] * nb[4] * nb[6] == 0)
+            kill = (b == 1) & (count >= 2) & (count <= 6) & (a == 1) & ok
+            if kill.any():
+                b[kill] = 0
+                changed = True
+        if not changed:
+            break
+    return b.astype(bool)
+
+
+def distance_from_mask(lines: np.ndarray, *, method: str = "thin") -> np.ndarray:
+    """Distance to the painted CENTRELINE, from a boolean paint mask.
+
+    `method="localmax"` is the local-maximum test this shipped with until 2026-08-12. It is kept
+    because every camera in `runs/` was fitted under it and a camera is only valid under the
+    evidence it was fitted to — so reproducing an old number needs the old centreline. It is not
+    the default and should not be: see `thin`.
+    """
     import cv2
 
-    inner = cv2.distanceTransform(lines.astype(np.uint8), cv2.DIST_L2, 5)
-    spine = (inner >= cv2.dilate(inner, np.ones((3, 3), np.uint8)) - 1e-3) & (inner > 0)
+    if method == "localmax":
+        inner = cv2.distanceTransform(lines.astype(np.uint8), cv2.DIST_L2, 5)
+        spine = (inner >= cv2.dilate(inner, np.ones((3, 3), np.uint8)) - 1e-3) & (inner > 0)
+    elif method == "thin":
+        spine = thin(lines)
+    else:
+        raise ValueError(f"centreline method {method!r} is not one of 'thin', 'localmax'")
     return cv2.distanceTransform((~spine).astype(np.uint8), cv2.DIST_L2, 5)
 
 

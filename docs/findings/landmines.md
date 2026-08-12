@@ -32,6 +32,13 @@ Ordered by how much they cost.
   puts 105 m ahead by 20×, so that is settled — but 68 m and 72 m score **bit-for-bit identically**,
   because the touchlines never land inside the frame and on the surface. The width is assumed on
   this clip, not measured, and no number would move if it were wrong.
+- **A local maximum of a distance transform is not a skeleton.** `inner >= dilate(inner)` shipped
+  as the centreline extractor for months and does not preserve connectivity: on `fan` frame 0 the
+  paint mask has 854 connected components and it returned **1823**, longest run 184 px inside a
+  3408 px band. On one synthetic connected arc it returns **27 pieces**. Use a real thinning
+  algorithm — Zhang-Suen is 30 lines and gives back the mask's own component count exactly.
+  Downstream cost of the broken version: `g11710897` yielded 2 lines a frame against 5, and 2 is
+  below `refit.MIN_MATCHED`, so the clip was unfittable for a reason nothing pointed at.
 - **Check what is IN THE FRAME before blaming the detector.** `g15449383` scores two markings, and
   a day went into why the paint was being missed. Three markings reach the image at all and one of
   those never reaches the grass — it is a low side-on shot of the centre circle. Count what
