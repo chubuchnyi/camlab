@@ -117,6 +117,12 @@ Ordered by how much they cost.
   `cv2.setNumThreads(1)` takes it from 12.7 s to 38.4. The repo's own line — "one core is the
   requirement, 342 ms on one thread against 324 on sixteen" — was reading the Python half of a job
   whose OpenCV half was already on ten cores.
+- **A worst-line number is a max over MARKINGS, so two cameras seeing different amounts of pitch
+  cannot be ranked by it.** The anchor chooser written on 2026-08-13 compared the operator's own aim
+  on `g11710897` — **22.51 px on 7 markings** — against the seed's untouched pose at **16.61 px on
+  3**, took the seed, and left the clip unsolvable: that pose has a focal 32 % out and had pushed
+  four markings off the picture. `MIN_SUPPORTING_MARKINGS` already says this and I broke it the same
+  day I was enforcing it elsewhere. Rank by marking count first, error second.
 - **The turf detector called the SKY the pitch.** `_turf` keyed on the frame's dominant bright
   saturated hue with no bound on where that hue could be. On `g11710897` — a phone at the touchline
   at dusk — the biggest such region is the sky, so the peak came out at **108**, which is blue: the

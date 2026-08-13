@@ -65,15 +65,22 @@ def main() -> None:
     cx, cy = float(seed["cx"]), float(seed["cy"])
     n = len(seed["frames"])
 
-    def paint_worst(i, focal, rvec, centre) -> float:
-        """The worst marking's own median distance to the paint on frame `i`. The judge.
+    def paint_worst(i, focal, rvec, centre) -> tuple[int, float]:
+        """`(markings scored, the worst one's own median distance to the paint)` on frame `i`.
 
-        `worst_line_px`, not the pooled median: a camera can sit on one family of lines while the
-        family parallel to it is metres off, and pooling lets the lines that fit outvote the ones
-        that do not. NaN when the frame cannot be scored at all, and NaN sorts last below.
+        **Both, and the count first.** `worst_line_px` is a max over the markings a frame scores, so
+        a camera holding three of them and one holding seven are not being measured by the same
+        statistic and cannot be ranked against each other by that number. Comparing them anyway is
+        how the operator's own anchor on `g11710897` — 22.51 px on **7 markings** — lost to the
+        seed's untouched pose at 16.61 px on **3**, and the whole clip stayed unsolvable because the
+        chain then ran from a camera whose focal was 32 % out and which had pushed four markings off
+        the picture.
+
+        This repo already names the rule as `MIN_SUPPORTING_MARKINGS`, and the anchor chooser I
+        wrote this morning broke it.
         """
         r = frame_residual(info.frame_path(i), focal, rvec, centre, frame=i, cx=cx, cy=cy)
-        return float(r.worst_line_px)
+        return int(r.n_markings), float(r.worst_line_px)
 
     # BOTH stores offer candidates and the PAINT picks. Ranking by store is what broke this the
     # first time it was fixed: preferring the run's own file put `fan --anchor 0` on a 31.55 px
@@ -103,13 +110,15 @@ def main() -> None:
                    "the solve itself", None)]
         scored += [(paint_worst(a, e["focal_px"], e["rotation"], e["position"]), src, e)
                    for src, e in offers]
-        scored.sort(key=lambda r: (np.isnan(r[0]), r[0]))
+        # Most markings first, then the lowest error among those. A camera that sees more of the
+        # pitch is being asked a harder question, and winning the easier one is not winning.
+        scored.sort(key=lambda r: (-r[0][0], np.isnan(r[0][1]), r[0][1]))
         best, src, entry = scored[0]
-        for w, s_, _e in scored:
-            print(f"   anchor {a}: {w:8.2f} px  {s_}")
+        for (mk, w), s_, _e in scored:
+            print(f"   anchor {a}: {w:8.2f} px on {mk:2d} markings  {s_}")
         if entry is not None:
             hand[str(a)] = entry
-        print(f"   anchor {a}: using {src} at {best:.2f} px")
+        print(f"   anchor {a}: using {src} at {best[1]:.2f} px on {best[0]} markings")
 
     by_hand = [a for a in anchors if str(a) in hand]
     # Said out loud, because "the anchor you aimed was ignored" is invisible in the result: the

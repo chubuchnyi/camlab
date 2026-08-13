@@ -89,3 +89,61 @@ found in the trees" comes from, and it is what a horizon estimate would be built
 Target: on `g11710897` and `g14604660`, the surface mask must stop at the boards. A camera-free
 check exists and currently fails — "where does the grass stop" should read 40–60 % of frame height
 on these clips and reads 0 %.
+
+
+---
+
+# Three of the branch's four items, resolved the same day
+
+## The surface mask now stops at the boards — target met
+
+Fixed by the sky repair rather than by anything aimed at it. The camera-free check I set as the
+target reads:
+
+| clip | top of grass, before | after |
+|---|---|---|
+| `g11710897` | 0 % of frame height | **42 %** |
+| `g14604660` | 51 % | 51 % |
+| `broadcast` | 38 % | 38 % |
+| `fan` | 0 % | 0 % — correct, it is a crop with no sky in it |
+
+## The ridge scales do not need widening — refuted
+
+The measured fact stands: shot from the touchline the near part of a line is 32 px wide against a
+largest scale of 7. The conclusion drawn from it does not. Projecting through the operator's own
+anchor — the only camera on that clip that scores anything — and asking what each detected line
+lies on:
+
+| frame | scales | lines | on markings | junk |
+|---|---|---|---|---|
+| 0 | (2, 4, 7) shipped | 6 | **6** | **0** |
+| 0 | (3, 6, 12, 24) | 13 | 6 | **7** |
+| 1 | shipped | 5 | 3 | 2 |
+| 1 | (3, 6, 12, 24) | 12 | 7 | 5 |
+
+The shipped scales already find every marking on frame 0 and add no junk at all. Widening doubles
+the junk for at best a wash. The detector copes with a line three times wider than its largest
+scale, and the number that said otherwise was a fact about the paint, not about the detector.
+
+*A caveat on how this was nearly got wrong:* the first run of this comparison projected through
+`camera_smooth.json` and reported **zero** of the detected lines as markings on a frame where six
+of them are. That clip has no trustworthy camera — its verdict is NO VERDICT — so "distance from a
+line to a marking" could not be computed at all. The operator's anchor is the only camera there
+that scores, and it is what the table above uses.
+
+## What actually kept `g11710897` unsolvable
+
+Not the detector, not the scales, not the surface. Scored frame by frame:
+
+| | worst line | markings |
+|---|---|---|
+| the operator's anchor | 22.51 px | **7** |
+| `camera_start.json`, and every stage after it | 16.61 → 9.39 px | **3** |
+
+The seed sits at focal 2778 against the anchor's 2100 — 32 % out — and that difference is exactly
+four markings pushed off the picture. Its 9.39 px is a max over three of them, the anchor's 22.51 a
+max over seven, and **those are not the same statistic**.
+
+The anchor chooser added that morning ranked them by the number alone and took the seed. So the
+chain ran from a camera that had already thrown the pitch away, on every one of the operator's
+twelve anchors. Fixed: markings first, error second.
