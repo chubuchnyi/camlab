@@ -248,6 +248,29 @@ def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """``(ridge, value, surface)`` — everything before the threshold, which is the expensive half.
 
     Split out so a search over thresholds pays for the ridge once instead of once per candidate.
+
+    The arithmetic is unchanged and the output is bit-for-bit what the shift-based version returned;
+    what changed is that it stopped allocating. Twelve scale-and-direction combinations each built
+    four fresh full-frame arrays — 24 allocations of 2 Mpx a call — where padding once and taking
+    **views** into the padded copy costs nothing and the temporaries can be reused. Measured:
+    132.5 ms to 64.1 on `broadcast`, 112.1 to 64.7 on `CRO_MOR_194948`, 111.5 to 67.2 on
+    `g14604660`.
+
+    Two other formulations were measured and are not here, so nobody spends the afternoon:
+
+    *OpenCV morphology.* `min(v - v₊, v - v₋)` is `v - max(v₊, v₋)`, and a max over two points is a
+    dilation by a two-point structuring element; "turf on both sides" is an erosion by the same one.
+    Exactly equivalent, and it comes out the same 1.1–2.2× — because `cv2.dilate` with a 15×15
+    kernel holding two set points still walks all 225.
+
+    *Sparse, over the pixels that could be paint.* The trick that made `thin` 17× faster loses here
+    by **3×**: `val >= RIDGE_MIN_V` covers 62–98 % of the frame, so there is almost nothing to skip,
+    and fancy indexing gives up the contiguity that makes the dense version fast.
+
+    And the ceiling is about 2×, not the 10× a single `MORPH_TOPHAT` suggests — a top-hat asks
+    "brighter than the neighbourhood" in one pass and this asks a directional question twelve times
+    with a turf condition on each. Getting more means changing what is asked, which changes the
+    evidence.
     """
     import cv2
 
@@ -256,13 +279,28 @@ def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     surface = _surface(turf)
     val = hsv[..., 2].astype(np.int16)
 
+    pad = max(RIDGE_SCALES)
+    height, width = val.shape
+    # 255 outside the frame, so a pixel whose neighbour is off-picture reads as hugely darker than
+    # it and never wins the max — the same thing `_shift`'s fill did.
+    vpad = np.full((height + 2 * pad, width + 2 * pad), 255, np.int16)
+    vpad[pad:pad + height, pad:pad + width] = val
+    tpad = np.zeros((height + 2 * pad, width + 2 * pad), bool)
+    tpad[pad:pad + height, pad:pad + width] = turf
+
     ridge = np.full(val.shape, -1000, np.int16)
+    hi = np.empty(val.shape, np.int16)
+    side = np.empty(val.shape, np.int16)
+    both = np.empty(val.shape, bool)
     for d in RIDGE_SCALES:
         for dy, dx in ((1, 0), (0, 1), (1, 1), (1, -1)):
-            side = np.minimum(
-                val - _shift(val, d * dy, d * dx, 255), val - _shift(val, -d * dy, -d * dx, 255)
-            ).astype(np.int16)
-            both = _shift(turf, d * dy, d * dx, False) & _shift(turf, -d * dy, -d * dx, False)
+            def win(a, sy, sx, d=d, dy=dy, dx=dx):
+                return a[pad + sy * d * dy:pad + sy * d * dy + height,
+                         pad + sx * d * dx:pad + sx * d * dx + width]
+
+            np.maximum(win(vpad, 1, 1), win(vpad, -1, -1), out=hi)
+            np.subtract(val, hi, out=side)
+            np.logical_and(win(tpad, 1, 1), win(tpad, -1, -1), out=both)
             side[~both] = -1000
             np.maximum(ridge, side, out=ridge)
     return ridge, val, surface

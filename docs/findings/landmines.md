@@ -89,6 +89,16 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **A sparse rewrite wins or loses entirely on how sparse the data is.** Working the set pixels
+  instead of the frame made `thin` **17× faster** — the paint is ~20 000 of 2 000 000 pixels. The
+  identical trick on `ridge_map` is **3× SLOWER**, because `val >= RIDGE_MIN_V` covers 62–98 % of
+  the frame so there is nothing to skip, and fancy indexing gives up the contiguity the dense
+  version runs on. Measure the density before reaching for it.
+- **"10× headroom" from a primitive that answers a different question is not headroom.** A single
+  `MORPH_TOPHAT` is 10 ms against `ridge_map`'s 109, and that comparison is meaningless: the top-hat
+  asks "brighter than the neighbourhood" once, `ridge_map` asks a directional question twelve times
+  with a turf condition on each. Written as morphology *exactly* it comes out 1.1–2.2×, the same as
+  simply not reallocating. The real ceiling was ~2×, and I quoted 10.
 - **This workload is memory-bound, and more cores do nothing.** Scoring 60 frames on 8 processes,
   each pinned to one OpenCV thread: **7.8 cores busy, 130 s of CPU against 20, and the same 16.8 s
   wall clock**. `paint_masks` costs MORE per pixel as the frame grows — 64, 76, 107 ms/Mpx at 0.1,
