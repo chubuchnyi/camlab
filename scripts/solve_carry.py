@@ -46,6 +46,10 @@ def main() -> None:
     ap.add_argument("--anchor", default="0",
                     help="comma-separated frame numbers; each frame is carried from its nearest")
     ap.add_argument("--seed", default="camera_auto.json")
+    ap.add_argument("--hand-key", default=None,
+                    help="which camera the operator's edits are keyed to, when that is not the "
+                         "seed's own name. The pipeline snapshots a seed it is about to overwrite "
+                         "to camera_seed_used.json, and the edits stay keyed to the original.")
     ap.add_argument("--out", default="camera_carry.json")
     ap.add_argument("--no-hand", action="store_true",
                     help="ignore calib/ and refit every anchor from the solve — the honest test "
@@ -89,8 +93,13 @@ def main() -> None:
     #
     # Clip-scoped position writes are dropped before the choice — 117 of `fan`'s 120 manual entries
     # are the "position applies to the whole clip" tick-box, not an aim. See `solve/hand.py`.
+    # Keyed to whatever the operator aimed AGAINST, which is not always the file being read. The
+    # pipeline copies a seed it is about to overwrite to `camera_seed_used.json` and reads the copy;
+    # the edits stay keyed to the original, and looking them up under the copy's name finds none.
+    # That combination silently refitted every anchor from the seed's own pose on `g11710897` —
+    # anchor list correct, anchors themselves gone.
     candidates = hand_candidates(
-        info.dir, args.seed, seed_camera=seed,
+        info.dir, args.hand_key or args.seed, seed_camera=seed,
         calib_dir=Path(__file__).resolve().parent.parent / "calib", clip_id=args.clip)
     if args.no_hand:
         candidates = {}

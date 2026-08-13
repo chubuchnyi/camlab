@@ -158,6 +158,8 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
     #
     # Not refused, because re-solving from a refined camera is a real thing to want. Snapshotted:
     # the run reads a copy, so whatever it overwrites, what it STARTED from is still on disk.
+    hand_key = seed
+    requested_seed = seed
     if seed in OUTPUTS:
         from camlab.runs import ClipInfo
 
@@ -167,6 +169,7 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
             snap = info.dir / SEED_SNAPSHOT
             snap.write_text(src.read_text())
             out["seed"] = seed = SEED_SNAPSHOT
+            hand_key = requested_seed
             out["stages"]["seed"] = (
                 f"seeded from a copy of {src.name} kept as {SEED_SNAPSHOT}, because the chain "
                 f"overwrites {src.name} itself"
@@ -175,7 +178,8 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
         if script == "solve_carry.py":
-            args += ["--anchor", ",".join(str(a) for a in picks), "--seed", seed]
+            args += ["--anchor", ",".join(str(a) for a in picks), "--seed", seed,
+                     "--hand-key", hand_key]
         args += extra
         if on_progress:
             on_progress(i, len(STAGES), label, "running")

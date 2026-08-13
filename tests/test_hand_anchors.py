@@ -195,3 +195,23 @@ def test_the_chain_hands_back_its_last_output_not_a_hardcoded_name():
     last = [extra for _l, _s, extra in STAGES if "--out" in extra][-1]
     assert FINAL_CAMERA == last[last.index("--out") + 1]
     assert FINAL_CAMERA in OUTPUTS
+
+
+def test_the_hand_key_survives_the_seed_snapshot():
+    """Two changes made the same day, and together they lost the operator's work.
+
+    pipeline.run copies a seed it is about to overwrite to camera_seed_used.json and reads the copy.
+    The edits stay keyed to the ORIGINAL name, so looking them up under the copy's finds none — and
+    solve_carry then quietly refitted every anchor from the seed's own pose. On g11710897 the anchor
+    LIST was right and the anchors themselves were gone, and the clip scored 3 markings where the
+    operator's aim scores 7.
+    """
+    import inspect
+
+    from camlab.solve import pipeline
+
+    src = inspect.getsource(pipeline.run)
+    assert "--hand-key" in src, "the hand key is not passed at all"
+    assert "hand_key = requested_seed" in src, (
+        "the snapshot branch does not preserve the name the edits are keyed to"
+    )
