@@ -150,12 +150,16 @@ def main() -> None:
     v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": out_f.tolist(),
                           "rotation": out_r.tolist(), "position": pos.tolist()})
     print(f"\n== wrote {args.out} in {time.time() - t0:.0f}s")
-    print(f"   {v.line()}")
     print(f"   smoothed frames accepted  {taken} of {n}")
     print(f"   worst line, median  {np.nanmedian(w0):6.2f} px  ->  {np.nanmedian(w):6.2f} px")
     print(f"   worst spot, median  {np.nanmedian(sp0):6.2f} px  ->  {np.nanmedian(sp):6.2f} px")
     print(f"   frames under 20 px  {int(np.nansum(w0 < 20)):6d}     ->  "
           f"{int(np.nansum(w < 20)):6d}   of {n}")
+    # LAST, because `solve/pipeline.py` summarises a stage by its FINAL line of output and
+    # the viewer shows that. "40 of 40 frames under 20 px" as that line is how a clip
+    # scoring TWO markings reads as solved — g11710897 printed exactly that today, and
+    # its real verdict is "NO VERDICT, 2 markings/frame, 63 samples".
+    print(f"   {v.line()}")
 
 
 if __name__ == "__main__":

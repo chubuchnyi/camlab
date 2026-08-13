@@ -221,7 +221,6 @@ def main() -> None:
     v = judge(args.clip, {"cx": cx, "cy": cy, "focal_px": focal.tolist(),
                           "rotation": rot.tolist(), "position": pos.tolist()})
     print(f"\n== wrote {out} in {time.time() - t0:.0f}s")
-    print(f"   {v.line()}")
     print(f"   worst line, median  {np.nanmedian(w0):6.2f} px  ->  {np.nanmedian(w):6.2f} px")
     print(f"   frames under {args.bad_px:.0f} px  {int(np.nansum(w0 < args.bad_px)):6d}     ->  "
           f"{int(np.nansum(w < args.bad_px)):6d}   of {n}")
@@ -232,6 +231,11 @@ def main() -> None:
         from collections import Counter
         tally = Counter(v.split()[0] for v in chose.values())
         print("   what won:           " + ", ".join(f"{k} {v}" for k, v in tally.most_common()))
+    # LAST, because `solve/pipeline.py` summarises a stage by its FINAL line of output and
+    # the viewer shows that. "40 of 40 frames under 20 px" as that line is how a clip
+    # scoring TWO markings reads as solved — g11710897 printed exactly that today, and
+    # its real verdict is "NO VERDICT, 2 markings/frame, 63 samples".
+    print(f"   {v.line()}")
 
 
 if __name__ == "__main__":
