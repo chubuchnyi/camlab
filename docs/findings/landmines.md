@@ -89,6 +89,14 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **The turf detector called the SKY the pitch.** `_turf` keyed on the frame's dominant bright
+  saturated hue with no bound on where that hue could be. On `g11710897` — a phone at the touchline
+  at dusk — the biggest such region is the sky, so the peak came out at **108**, which is blue: the
+  turf mask read **100 % over the top quarter of the frame and 2 % over the bottom half**, the
+  "playing surface" was the sky, the paint detector found "markings" in the tree canopy, and the
+  metric reported ONE marking on a frame with a line plainly visible in it. The operator's anchors
+  went from 1 marking to **7** once the peak was looked for among hues grass can be. If a clip
+  scores absurdly few markings, check what `_turf` locked onto before anything else.
 - **A fix in the repo is not a fix in the RUNNING server.** The atomic write below was committed
   and then a SECOND `camera_manual.json` was corrupted anyway — `runs/g11710897`, same stray `}`.
   The uvicorn process had been up since before the commit. Restart the server after touching it,

@@ -57,6 +57,29 @@ None of this is used anywhere yet. Listed with what it would constrain, not as a
 - **Mowing stripes are evenly spaced in metres** — already measured and already trusted on `fan`
   (11.00 m ± 2.3 % across a 1.61× zoom), and never yet used to find a camera.
 
+## First result: the turf detector had locked onto the sky
+
+Before any of the above could be worked on, the surface mask turned out to be wrong for a reason
+nobody had guessed. `_turf` finds the frame's dominant bright saturated hue and calls that grass,
+with **no bound on where the hue may be**. On `g11710897` at dusk the biggest bright saturated
+region in the picture is the sky, so the peak came out at hue **108** — blue.
+
+| | before | after |
+|---|---|---|
+| turf mask, top quarter of frame | **100 %** | 0 % |
+| turf mask, bottom half | **2 %** | 68 % |
+| markings scored on the operator's anchors | **1** | **7** |
+| worst line on those anchors | 1.98–13.27 px | 22.5–31.1 px |
+
+The error got **worse and became true**: one marking at 2 px is not a measurement, seven markings
+at 25 px is. The fix bounds the peak search to `GRASS_HUE_RANGE = (25, 95)` — the hue is still
+measured from the frame and the width around it is unchanged, it simply refuses to call something
+grass that no grass is, and returns nothing at all when there is no green in the picture.
+
+No other clip moved: `fan` 1.68, `broadcast` 2.56, `CRO_MOR_194948` 3.68, `NET_ARG_225042` 5.84,
+`14604731` 1.24, `wp_194948` 3.41 — identical before and after, because their peaks were already
+green.
+
 ## Where to start
 
 The measurable first target is the surface mask, because three separate things depend on it and it

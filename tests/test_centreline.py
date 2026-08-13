@@ -100,3 +100,40 @@ def test_the_old_extractor_is_still_reachable_by_name():
     assert distance_from_mask(band, method="localmax").shape == band.shape
     with pytest.raises(ValueError, match="not one of"):
         distance_from_mask(band, method="skeletonise")
+
+
+def test_the_turf_hue_is_looked_for_among_hues_grass_can_be():
+    """The sky is not a pitch.
+
+    `_turf` keyed on the frame's dominant bright saturated hue with no bound on where it could be.
+    On `g11710897` — a phone at the touchline at dusk — the biggest such region is the SKY, so the
+    peak came out at 108, which is blue: the turf mask read 100 % over the top quarter of the frame
+    and 2 % over the bottom half, the "playing surface" was the sky, and the metric reported ONE
+    marking on a frame with a line plainly visible in it. Anchors on that clip went 1 marking to 7.
+    """
+    from camlab.measure.paint import GRASS_HUE_RANGE, _turf
+
+    h, w = 200, 300
+    hsv = np.zeros((h, w, 3), dtype=np.uint8)
+    hsv[..., 1] = 120
+    hsv[..., 2] = 200
+    hsv[: int(h * 0.7), :, 0] = 108        # a big bright sky, most of the frame
+    hsv[int(h * 0.7):, :, 0] = 43          # a smaller strip of grass
+
+    turf = _turf(hsv)
+    assert turf[int(h * 0.85), w // 2], "the grass strip is not turf"
+    assert not turf[int(h * 0.2), w // 2], "the sky came back as turf — the peak is unbounded again"
+    lo, hi = GRASS_HUE_RANGE
+    assert lo <= 43 <= hi and not (lo <= 108 <= hi), "the band no longer brackets what it must"
+
+
+def test_a_frame_with_no_grass_in_it_returns_no_turf():
+    """Not the unbounded peak, which would hand back whatever the largest region happens to be.
+    "There is no pitch in this picture" is the honest answer and every caller already guards it."""
+    from camlab.measure.paint import _turf
+
+    hsv = np.zeros((80, 80, 3), dtype=np.uint8)
+    hsv[..., 0] = 108
+    hsv[..., 1] = 120
+    hsv[..., 2] = 200
+    assert not _turf(hsv).any()

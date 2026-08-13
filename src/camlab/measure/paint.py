@@ -43,9 +43,24 @@ ADAPTIVE_C = 4
 #: test and paint the crowd with phantom markings.
 HUE_HALFWIDTH = 7
 
+#: …but the peak may only be looked for among hues grass can actually be. OpenCV's hue runs 0..180,
+#: green sits around 35..85, and **the search used to be unbounded**. On `g11710897` — a phone at
+#: the touchline at dusk — the biggest bright saturated region in the frame is the SKY, so the peak
+#: came out at **108**, which is blue. The consequences, all on one frame:
+#:
+#:     turf mask     top quarter 100 %, bottom half 2 %
+#:     playing surface   the sky, and 2 % of the actual grass
+#:
+#: and so no marking could be scored, the paint detector found "markings" in the tree canopy, and
+#: the metric reported one marking on a frame with a plainly visible line in it.
+#:
+#: This does NOT go back to a fixed band — the hue is still measured from the frame, and the width
+#: around it is still `HUE_HALFWIDTH`. It only refuses to call something grass that no grass is.
+GRASS_HUE_RANGE = (25, 95)
+
 
 def _turf(hsv: np.ndarray) -> np.ndarray:
-    """Turf pixels, keyed to this frame's own dominant hue."""
+    """Turf pixels, keyed to this frame's own dominant hue **among the hues grass can be**."""
     import cv2
 
     h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
@@ -53,7 +68,15 @@ def _turf(hsv: np.ndarray) -> np.ndarray:
     if not lit.any():
         return np.zeros(h.shape, dtype=bool)
     hist = np.bincount(h[lit].ravel(), minlength=180).astype(np.float32)
-    peak = int(np.argmax(cv2.GaussianBlur(hist.reshape(-1, 1), (1, 5), 0)))
+    smooth = cv2.GaussianBlur(hist.reshape(-1, 1), (1, 5), 0).ravel()
+    lo, hi = GRASS_HUE_RANGE
+    band = smooth[lo:hi + 1]
+    if not band.any():
+        # No green anywhere. Returning the unbounded peak would hand back the sky; returning
+        # nothing says "there is no pitch in this picture", which is the honest answer and lets
+        # every caller's own emptiness guard fire.
+        return np.zeros(h.shape, dtype=bool)
+    peak = lo + int(np.argmax(band))
     return (np.abs(h.astype(np.int16) - peak) <= HUE_HALFWIDTH) & (s > 70) & (v > 70)
 
 
