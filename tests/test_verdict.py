@@ -143,3 +143,60 @@ def test_a_gap_in_the_paint_is_reported_as_a_gap_and_not_as_camera_error():
     nn, _ = cKDTree(spine).query(sub)
     assert nn[in_gap].max() > 30.0, "if this stops being large the test no longer proves anything"
     assert nn[~in_gap].max() < 1.0
+
+
+# ---------------------------------------------------------------------------------------------
+# The per-frame evidence cache. 98 % of a score is camera-independent.
+# ---------------------------------------------------------------------------------------------
+
+def test_the_cache_is_keyed_on_the_file_not_just_its_name(tmp_path):
+    """A re-ingested clip writes new pixels to the same path. Serving the previous decode's paint
+    under the new frame's name would be the worst kind of stale: silent, and about the evidence."""
+    import cv2
+
+    from camlab.measure.residual import clear_evidence_cache, frame_evidence_cached
+
+    clear_evidence_cache()
+    path = tmp_path / "000000.jpg"
+
+    first = np.full((80, 120, 3), 40, np.uint8)
+    first[38:42, 10:110] = 250                       # a painted band on dark ground
+    cv2.imwrite(str(path), first)
+    a = frame_evidence_cached(path)
+
+    second = np.full((80, 120, 3), 40, np.uint8)
+    second[10:14, 10:110] = 250                      # the same path, a different picture
+    cv2.imwrite(str(path), second)
+    b = frame_evidence_cached(path)
+
+    assert a is not b, "the cache served the old decode under the new frame"
+
+
+def test_the_cache_returns_the_same_object_for_the_same_frame(tmp_path):
+    import cv2
+
+    from camlab.measure.residual import clear_evidence_cache, frame_evidence_cached
+
+    clear_evidence_cache()
+    path = tmp_path / "000000.jpg"
+    img = np.full((80, 120, 3), 40, np.uint8)
+    img[38:42, 10:110] = 250
+    cv2.imwrite(str(path), img)
+    assert frame_evidence_cached(path) is frame_evidence_cached(path)
+
+
+def test_the_cache_is_bounded(tmp_path):
+    """Each entry is a full-resolution distance map and surface mask — about 12 MB on 1920x1080 —
+    and a whole-clip sweep touches every frame once and gains nothing from holding them all."""
+    import cv2
+
+    from camlab.measure import residual as R
+
+    R.clear_evidence_cache()
+    for i in range(R.EVIDENCE_CACHE + 3):
+        p = tmp_path / f"{i:06d}.jpg"
+        img = np.full((60, 90, 3), 40, np.uint8)
+        img[28:32, 5:85] = 250
+        cv2.imwrite(str(p), img)
+        R.frame_evidence_cached(p)
+    assert len(R._EVIDENCE) == R.EVIDENCE_CACHE

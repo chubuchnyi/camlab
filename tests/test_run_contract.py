@@ -67,9 +67,27 @@ class TestAgainstTheRealRun:
         assert (cam["width"], cam["height"]) == (info.width, info.height)
 
     def test_unusable_frames_are_marked_not_removed(self):
+        """The rule is R-6: a frame the solver could not use is MARKED, never dropped.
+
+        This used to assert `sum(degenerate) > 0` on the ground that "this clip has a rank-poor
+        tail". It did — frames 115-118 of `camera_auto.json` carry focals of 300, 20000, 300,
+        20000, pinned at both search bounds. But the flag was being COPIED through four stages, so
+        those four stayed flagged in `camera_smooth.json` long after the chain repaired them to
+        4729, 4727, 4726, 4716, and the viewer drew them in its "could not use this" pink.
+
+        Deriving the flag from the camera in hand fixed that, and re-solving then produced a clip
+        with no unusable frame at all — so the old assertion failed for the right reason. What is
+        actually contractual is the correspondence: every frame is present, and a frame is flagged
+        if and only if this camera still shows it as unusable.
+        """
         cam = client.get("/api/run/fan/camera").json()
         assert len(cam["frames"]) == 120, "a broken clip must not look like a shorter good one"
-        assert sum(cam["degenerate"]) > 0, "this clip has a rank-poor tail; it must be flagged"
+        lo, hi = 300.0, 20000.0
+        for i, f in enumerate(cam["focal_px"]):
+            unusable = not (f > 0) or f <= lo + 1e-6 or f >= hi - 1e-6
+            assert bool(cam["degenerate"][i]) == unusable, (
+                f"frame {i} has focal {f} and degenerate={cam['degenerate'][i]}"
+            )
 
     def test_a_frame_comes_back_at_the_cropped_size(self):
         import io

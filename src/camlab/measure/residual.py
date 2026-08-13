@@ -20,6 +20,7 @@ here therefore carries `n`, and :func:`compare` refuses a verdict when coverage 
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -195,6 +196,55 @@ def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
     return kmat @ np.column_stack([rot[:, 0], rot[:, 1], t])
 
 
+#: How many frames' paint to keep. Every scoring loop in this repo hammers ONE frame with many
+#: cameras — a bootstrap anchor takes ~7000, the polish pass 6–8, the refit one per iteration — so
+#: a cache of a handful covers all of them. A whole-clip sweep touches each frame once and gains
+#: nothing from a bigger one, it would only hold memory: each entry is a float32 distance map and a
+#: bool surface mask at full resolution, about 12 MB on 1920×1080.
+EVIDENCE_CACHE = 4
+
+_EVIDENCE: OrderedDict = OrderedDict()
+
+
+def frame_evidence_cached(frame_path: Path):
+    """`(dist, surface, spine, tree, width, height)` for one frame, computed once.
+
+    **This is 98 % of a score.** Profiled on `broadcast` at 1920×1080, interleaved so background
+    load cancels: a whole `frame_residual` is 463 ms and decode + `paint_masks` is 456 ms of it —
+    the camera-dependent remainder is **7 ms**. And none of that 456 ms depends on the camera at
+    all, so scoring one frame against N cameras recomputed the same pixels N times.
+
+    Keyed on the file's path, size and modification time, so re-ingesting a clip invalidates it
+    rather than serving the previous decode's paint under the new frame's name.
+    """
+    import cv2
+    from scipy.spatial import cKDTree
+
+    st = frame_path.stat()
+    key = (str(frame_path), st.st_size, st.st_mtime_ns)
+    hit = _EVIDENCE.get(key)
+    if hit is not None:
+        _EVIDENCE.move_to_end(key)
+        return hit
+
+    bgr = cv2.imread(str(frame_path))
+    if bgr is None:
+        raise FileNotFoundError(frame_path)
+    height, width = bgr.shape[:2]
+    dist, surface = paint_masks(bgr)
+    spine = centreline_pixels(dist)
+    got = (dist, surface, spine, cKDTree(spine) if len(spine) else None, width, height)
+    _EVIDENCE[key] = got
+    while len(_EVIDENCE) > EVIDENCE_CACHE:
+        _EVIDENCE.popitem(last=False)
+    return got
+
+
+def clear_evidence_cache() -> None:
+    """Drop it. For tests, and for a caller that has finished with a clip and wants the memory."""
+    _EVIDENCE.clear()
+
+
 def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
                    match_px: float = 40.0,
                    cx: float | None = None, cy: float | None = None) -> Residual:
@@ -214,26 +264,15 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     NEIGHBOURING line finds paint at ~0 px and scores perfect. Nothing in a distance-to-paint
     measurement can see that; `line_error.line_errors` is what does, by insisting on correspondence.
     """
-    import cv2
-
-    bgr = cv2.imread(str(frame_path))
-    if bgr is None:
-        raise FileNotFoundError(frame_path)
-    height, width = bgr.shape[:2]
+    dist, surface, spine, tree, width, height = frame_evidence_cached(Path(frame_path))
     # Both of these used to build a Residual with five of its nine fields and raise TypeError. They
     # are the paths nothing exercises until a solve goes bad, so the metric crashed exactly on the
     # cameras worth measuring: `camera_ptz.json` has frames with a non-positive focal, and the
     # server's residual route returned 500 for them rather than "this camera is broken".
     if not (focal > 0):
         return _empty(frame, 0)
-
-    dist, surface = paint_masks(bgr)
-    spine = centreline_pixels(dist)
-    if not len(spine):
+    if tree is None:
         return _empty(frame, 0)
-
-    from scipy.spatial import cKDTree
-    tree = cKDTree(spine)
 
     xy1 = _marking_samples()
     h = world_to_image(focal, rvec, centre, width, height, cx=cx, cy=cy)
