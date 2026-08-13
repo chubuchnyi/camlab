@@ -32,8 +32,12 @@ it scored 2 markings at 26.84 px and no verdict.
 
 ## The pipeline, and why each stage is there
 
-1. **anchor** — a hand-aligned frame, or frame 0 refitted from the default. One hand anchor is
-   worth about sixty frames.
+1. **anchors** — EVERY frame the operator has aimed, not one. The pipeline passed `--anchor 0`
+   while `solve_carry` had always accepted a list, so eleven of `g11710897`'s twelve aims were
+   discarded on every press of the solve button. And they are ranked by **markings first, error
+   second**: a worst-line number is a max over the markings a frame scores, so 22.51 px on 7 and
+   16.61 px on 3 are not comparable, and ranking them by the number alone is what kept that clip
+   unsolvable.
 2. **carry** (`solve/carry.py`) — take the camera to the next frame through the image-to-image
    homography, then refit. Copying instead loses the track in three frames, because the operator
    zooms: the focal runs 3476 → 5404 over 24 frames of `fan`.
@@ -46,8 +50,14 @@ it scored 2 markings at 26.84 px and no verdict.
    renderable.
 5. **smooth** (`scripts/smooth_camera.py`) — median-filter each parameter, keeping only the frames
    the paint agrees with. Focal jitter 5.22 → 3.52 px/frame, roll 0.034 → 0.026 °/frame.
+6. **polish** (`scripts/polish_camera.py`) — go back over the frames the chain left worst and offer
+   each the nearest better frame on either side, and the slerp between them. Kept only if it beats
+   what is there *and* scores on no fewer markings. Worst frame in the clip: `broadcast` 7.03 →
+   4.33, `14604731` 28.73 → 22.74, `fan` 4.06 → 3.21; on `NET_ARG_225042` eight frames sitting at
+   40–60 px went to 5–7. Medians barely move, which is right — only outliers are touched.
 
-All five behind one button in the viewer, and one call in `solve/pipeline.py`.
+All six behind one button in the viewer, and one call in `solve/pipeline.py`. The chain's output is
+`camera_polished.json`, read off `STAGES` rather than named in code.
 
 ## What the numbers mean
 
@@ -114,7 +124,15 @@ returned as **1823**. Zhang-Suen returns 846, the mask's own count. `g11710897` 
 a frame to 5**, and two is below `refit.MIN_MATCHED`, so that clip could not be fitted at all
 before. `fan` gaps 4 % → 2 %.
 
-*Precision is the open half, and it is what blocks #11* —
+*Precision is parked for want of data, not ideas* (2026-08-13). Over seven clips the detected
+lines are **315 markings and 12 non-markings** — there is nothing to validate a filter against. Two
+more candidates were measured and are in `findings/11-is-blocked-by-14-2026-08-12.md`: turf support
+at a wide scale (clean on `fan` frame 8, does not survive twelve samples) and "does paint continue
+past the segment's ends", whose sign turned out to be the **opposite** of the guess — straight
+markings 0 %, arc pieces 58 %, because `merge_collinear` already extends a straight marking over its
+whole painted run. Resume when the pitch-level clips have cameras good enough to label against.
+
+*The older reading, kept because the mechanism is real* —
 `findings/11-is-blocked-by-14-2026-08-12.md`. On `fan` frame 8 two of nine detected segments are
 55–60 px from any marking, and both lie along the **join between the grass and the advertising
 hoarding**. Feeding the generator the seven real ones moves the best hypothesis in the pool from
