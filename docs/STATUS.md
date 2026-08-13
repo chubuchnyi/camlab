@@ -188,10 +188,15 @@ branch, because pitch3d is being changed rather than accommodated.
 transform + Hough/LSD for the markings, `scipy.optimize` for the fit, a k-d tree for the residual.
 Nothing trained, nothing downloaded, no checkpoint to lose.
 
-Measured on an i7-11850H laptop with no GPU: the full chain over 60 frames of 1920×1080 takes
-**155 s** and peaks at 1.1 GB; the per-frame work is **340 ms** and 180 MB. **One core is the
-requirement** — 342 ms a frame on one thread against 324 ms on sixteen, which is noise. Several
-stages are parallel across frames and are not parallelised; that is undone work, not a limit.
+Measured on an i7-11850H laptop with no GPU. `paint_masks` is **122 ms** a frame at 1920×1080,
+down from 222 on 2026-08-13, and scoring the same frame again is **12.3 ms** rather than 454.
+
+**"One core is the requirement" was wrong** and is corrected in
+`findings/making-it-fast-2026-08-13.md`: OpenCV already threads its own operators and
+`measure_pairs` runs at 10.8 cores busy unaided. What does not parallelise is the rest, and not
+because of the GIL — 8 worker processes give 7.8 cores busy, 130 s of CPU against 20, and the
+**same** wall clock. The workload is memory-bound. `paint_masks` costs 64, 76, 107 ms per megapixel
+at 0.1, 0.5 and 2.1 Mpx, dearer per pixel as it grows, because it falls out of cache.
 
 The GPU box exists because it is always on and reachable, not because anything needs it.
 
