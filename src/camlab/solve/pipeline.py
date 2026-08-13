@@ -6,8 +6,8 @@ decoded, the clip appeared, and there was no way to get a camera without a shell
 
 The order is not arbitrary and every step earned its place by measurement:
 
-    1. **anchor** — a hand-aligned frame if the human has made one, else frame 0 refitted from the
-       default. One hand anchor is measured at about sixty frames' worth.
+    1. **anchors** — EVERY frame the human has aimed, not one. Each is worth about sixty frames of
+       carry, and each one added halves the drift the chain accumulates between them.
     2. **carry** — take that camera to the next frame through the image-to-image homography, then
        refit. Copying instead of carrying loses the track in three frames, because the operator
        zooms (`carrying-the-camera-works.md`).
@@ -24,6 +24,7 @@ Progress is reported through a callback rather than printed, because the caller 
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -83,7 +84,30 @@ OUTPUTS = frozenset(extra[extra.index("--out") + 1]
                     for _label, _script, extra in STAGES if "--out" in extra)
 
 
-def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
+def anchors_for(clip_id: str, seed: str, fallback: int = 0) -> list[int]:
+    """Every frame the operator has actually aimed, as anchors — not just one.
+
+    `run` took a single `anchor` and passed `--anchor 0`, while `solve_carry.py` has always
+    accepted a comma list and assigned each frame to its NEAREST anchor. So an operator who aimed
+    twelve frames of `g11710897` had eleven of them thrown away on every press of the solve button,
+    and the register's own finding — that each added anchor halves the drift a chain accumulates —
+    was unreachable from the viewer.
+
+    Falls back to `fallback` when nothing has been aimed, which is the old behaviour.
+    """
+    from camlab.runs import ClipInfo
+    from camlab.solve.hand import hand_candidates
+
+    info = ClipInfo.load(clip_id)
+    src = info.dir / seed
+    base = json.loads(src.read_text()) if src.exists() else None
+    got = hand_candidates(info.dir, seed, seed_camera=base,
+                          calib_dir=REPO / "calib", clip_id=clip_id)
+    frames = sorted(int(k) for k in got if 0 <= int(k) < info.n_frames)
+    return frames or [fallback]
+
+
+def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "camera_start.json",
         on_progress=None, timeout_s: int = 3600) -> dict:
     """Run every stage. Returns `{stage: last line of its output}` plus `ok` and `camera`.
 
@@ -91,7 +115,12 @@ def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
     on a broken earlier one is worse than a clear failure, because it produces a camera file that
     looks like every other camera file.
     """
-    out: dict = {"stages": {}, "ok": False, "camera": None, "seed": seed}
+    # Default: every frame the operator aimed. An explicit `anchor` still wins, for a caller that
+    # means one particular frame.
+    if anchor is None:
+        anchor = anchors_for(clip_id, seed)
+    picks = [anchor] if isinstance(anchor, int) else list(anchor)
+    out: dict = {"stages": {}, "ok": False, "camera": None, "seed": seed, "anchors": picks}
     if not (SCRIPTS / "solve_carry.py").exists():
         out["stages"]["setup"] = (
             f"the stage scripts are not at {SCRIPTS}. Set CAMLAB_SCRIPTS to the directory holding "
@@ -123,7 +152,7 @@ def run(clip_id: str, *, anchor: int = 0, seed: str = "camera_start.json",
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
         if script == "solve_carry.py":
-            args += ["--anchor", str(anchor), "--seed", seed]
+            args += ["--anchor", ",".join(str(a) for a in picks), "--seed", seed]
         args += extra
         if on_progress:
             on_progress(i, len(STAGES), label, "running")

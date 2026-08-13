@@ -168,3 +168,19 @@ def test_the_manual_file_is_written_atomically(tmp_path):
     got = json.loads(path.read_text())
     assert got in (big, small), "a reader saw half of one write and half of another"
     assert not list(tmp_path.glob(".camera_manual.*")), "a temp file was left behind"
+
+
+def test_the_pipeline_anchors_on_every_aimed_frame_not_one():
+    """`run` took a single `anchor` and passed `--anchor 0`, while solve_carry.py has always
+    accepted a comma list and assigned each frame to its nearest anchor. An operator who aimed
+    twelve frames of g11710897 had eleven thrown away on every press of the solve button, and the
+    register's own finding — each added anchor halves the drift the chain accumulates — was
+    unreachable from the viewer."""
+    import inspect
+
+    from camlab.solve import pipeline
+
+    src = inspect.getsource(pipeline.run)
+    assert '"--anchor", str(anchor)' not in src, "back to a single anchor"
+    assert '",".join' in src, "the anchor list is not being passed as a list"
+    assert "anchors_for" in src, "nothing looks up what the operator aimed"
