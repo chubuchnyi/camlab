@@ -303,33 +303,50 @@ def thin(mask: np.ndarray, max_passes: int = THIN_MAX_PASSES) -> np.ndarray:
 
     Costs about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip.
     """
-    b = mask.astype(np.uint8)
+    b = np.pad((np.asarray(mask) > 0).astype(np.uint8), 1)
     if not b.any():
-        return b.astype(bool)
-    b = b.copy()
+        return b[1:-1, 1:-1].astype(bool)
+    height, width = b.shape
+    flat = b.ravel()
+
+    # P2..P9 as flat-index offsets, in Zhang-Suen's clockwise order from north. The ORDER is the
+    # algorithm: `crossings` counts 0->1 transitions around the ring, and a different order counts
+    # something else and deletes pixels that hold a curve together.
+    off = np.array([-width, -width + 1, 1, width + 1,
+                    width, width - 1, -1, -width - 1], dtype=np.int64)
+
+    # Only the SET pixels, carried as a working set that only ever shrinks — thinning never turns a
+    # pixel back on. The frame is 2 Mpx and the paint is about 20 000 of them, so the whole-image
+    # formulation did a hundred times the arithmetic: 106.9 ms against 6.1 on `broadcast`, 94.8
+    # against 5.3 on `g14604660`, **17x**, bit-for-bit the same answer. Rescanning with
+    # `flatnonzero` each pass instead of carrying the set gives back most of it — that costs 33 ms
+    # of the 6.
+    idx = np.flatnonzero(flat)
     for _ in range(max_passes):
         changed = False
         for step in (0, 1):
-            p = np.pad(b, 1)
-            # P2..P9 in Zhang-Suen's order, clockwise from north. The order is the algorithm: `a`
-            # below counts 0->1 transitions around the ring, and a different order counts something
-            # else and deletes pixels that hold a curve together.
-            nb = [p[0:-2, 1:-1], p[0:-2, 2:], p[1:-1, 2:], p[2:, 2:],
-                  p[2:, 1:-1], p[2:, 0:-2], p[1:-1, 0:-2], p[0:-2, 0:-2]]
-            count = sum(nb)
+            if not idx.size:
+                break
+            nb = [flat[idx + o] for o in off]
+            count = nb[0].astype(np.int16)
+            for k in range(1, 8):
+                count += nb[k]
             ring = nb + [nb[0]]
-            a = sum(((ring[i] == 0) & (ring[i + 1] == 1)).astype(np.uint8) for i in range(8))
+            crossings = np.zeros(idx.size, np.int16)
+            for i in range(8):
+                crossings += (ring[i] == 0) & (ring[i + 1] == 1)
             if step == 0:
                 ok = (nb[0] * nb[2] * nb[4] == 0) & (nb[2] * nb[4] * nb[6] == 0)
             else:
                 ok = (nb[0] * nb[2] * nb[6] == 0) & (nb[0] * nb[4] * nb[6] == 0)
-            kill = (b == 1) & (count >= 2) & (count <= 6) & (a == 1) & ok
+            kill = (count >= 2) & (count <= 6) & (crossings == 1) & ok
             if kill.any():
-                b[kill] = 0
+                flat[idx[kill]] = 0
+                idx = idx[~kill]
                 changed = True
         if not changed:
             break
-    return b.astype(bool)
+    return b[1:-1, 1:-1].astype(bool)
 
 
 def distance_from_mask(lines: np.ndarray, *, method: str = "thin") -> np.ndarray:

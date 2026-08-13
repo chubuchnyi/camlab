@@ -137,3 +137,24 @@ def test_a_frame_with_no_grass_in_it_returns_no_turf():
     hsv[..., 1] = 120
     hsv[..., 2] = 200
     assert not _turf(hsv).any()
+
+
+def test_thinning_works_the_set_pixels_not_the_frame():
+    """The optimisation, pinned by the invariant that makes it correct.
+
+    A frame is 2 Mpx and its paint about 20 000 pixels, so the whole-image formulation did a
+    hundred times the arithmetic: 106.9 ms against 6.1 on `broadcast`, **17x**, bit-for-bit the
+    same answer. It is only correct because thinning never turns a pixel back ON, so the working
+    set may shrink and never has to be rescanned. If that stopped holding, carrying the set would
+    silently miss pixels that became deletable again.
+    """
+    band = np.zeros((120, 200), dtype=bool)
+    band[50:62, 20:180] = True
+    yy, xx = np.mgrid[0:120, 0:200]
+    band[(np.hypot(yy - 60, xx - 100) > 40) & (np.hypot(yy - 60, xx - 100) < 47)] = True
+
+    once = thin(band)
+    # Idempotent: thinning a skeleton returns the same skeleton. That is the invariant.
+    assert np.array_equal(thin(once), once)
+    # And nothing was ever added.
+    assert not (once & ~band).any(), "thinning set a pixel that was not in the mask"

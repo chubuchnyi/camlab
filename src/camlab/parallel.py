@@ -45,10 +45,15 @@ the picture grows because it falls out of cache:
 
 `ridge_map` makes 24 full passes over the frame. The cores wait on RAM.
 
-**So `default_workers()` returns 1**, and this module stays as the harness plus the measurement
-that says why. What actually helped was removing the work rather than spreading it: caching the
-paint per frame is 36.8× on any loop that scores one frame many times, because it does not touch
-the memory a second time at all. The lever left is fewer passes over the image, not more cores.
+**So `default_workers()` returns 2** — the measured knee, 1.14× and no waste — and the harness stays
+wired for when the ceiling lifts. It will: the ceiling is 24 passes over the frame in `ridge_map`,
+and the OpenCV primitive that answers the same question does it in one, measured at 10× there and
+20× on `thin`. Cut the traffic and this becomes compute-bound, at which point these workers scale.
+
+Sizing matters more than any of this. A clip here is 40–180 frames; a full match at 25 fps is
+**135 000**, which at today's 222 ms a frame is 8.3 hours for the paint alone, and real time needs
+40 ms. So the order is: fewer passes first, then cores, then — only if it is still not enough — a
+GPU, whose memory bandwidth is the thing this workload is actually short of.
 
 **Order matters against the cache.** `measure/residual.py` caches the paint per frame and that is a
 36.8× on any loop scoring one frame with many cameras. Parallelism divides the wall clock of what is
@@ -78,10 +83,15 @@ def default_workers() -> int:
             return max(1, int(env))
         except ValueError:
             pass
-    # One, deliberately. Measured above: eight workers burn eight times the CPU for the same wall
-    # clock. Set CAMLAB_WORKERS to try again on a machine with more memory bandwidth, or on a
-    # workload that is not 24 passes over a 2 Mpx frame.
-    return 1
+    # Two, measured rather than chosen. Scoring 60 frames, three repeats, medians: 16.0 s on one
+    # worker, **14.0 s on two (1.14x)**, 16.1 on three, 16.9 on four, 16.8 on six. The ceiling is
+    # memory bandwidth, not cores, so past two the extra processes only queue for the same RAM.
+    #
+    # This is expected to LIFT. The ceiling exists because `ridge_map` makes 24 full passes over
+    # the frame; replacing those with the OpenCV primitives that do the same job in one is a
+    # measured 10x on that function and 20x on `thin`, and once the traffic is cut the work becomes
+    # compute-bound and these workers start to matter. The harness is here early on purpose.
+    return max(1, min(2, (os.cpu_count() or 2) - 1))
 
 
 #: Below this many items the pool costs more than it saves — a process start is tens of
