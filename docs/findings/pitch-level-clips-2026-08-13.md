@@ -147,3 +147,37 @@ max over seven, and **those are not the same statistic**.
 The anchor chooser added that morning ranked them by the number alone and took the seed. So the
 chain ran from a camera that had already thrown the pitch away, on every one of the operator's
 twelve anchors. Fixed: markings first, error second.
+
+
+---
+
+# `g11710897` has a verdict for the first time
+
+| | markings/frame | worst line | verdict |
+|---|---|---|---|
+| before | 3 | 8.47 px | **NO VERDICT** |
+| after | **7** | 18.45 px | **4 of 8 supported frames under 20 px** |
+
+**The number got worse and became real.** 8.47 px was a max over three markings and meant nothing;
+18.45 over seven is a measurement, and one that can be improved. This is the carry stage alone —
+self-heal, shared centre, smoothing and polish have not run on it yet.
+
+Three defects had to be removed to get here, and all three were in code written the same day:
+
+1. **The turf detector had locked onto the sky**, so the "playing surface" was the sky and 2 % of
+   the grass. The operator's anchors went from 1 marking to 7 the moment the hue peak was bounded
+   to hues grass can be.
+2. **The anchor chooser ranked by the error alone**, so the operator's 22.51 px on 7 markings lost
+   to the seed's 16.61 px on 3 — and the seed's focal is 32 % out, which is exactly what had pushed
+   four markings off the picture. Ranks by markings first now.
+3. **The seed snapshot lost the anchors.** The pipeline copies a seed it is about to overwrite to
+   `camera_seed_used.json`; the edits stay keyed to the original name; the lookup found none and
+   every anchor was quietly refitted from the seed's own pose. The anchor *list* printed correctly
+   throughout, which is why it survived a whole run unnoticed.
+
+## What is visibly next on this clip
+
+The carry drifts between anchors: frame 20 comes out at focal 972 and frame 35 at 1709, against
+2100 at the anchors either side. The markings hold at 7 throughout, so the drift is in the camera
+and not in what can be measured — which is the situation the rest of the chain exists for, and it
+has not run yet.

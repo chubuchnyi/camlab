@@ -14,6 +14,7 @@ projected pitch lands on the painted one, judged by eye as well as by the number
 | `fan` (1080×608, phone, stands, floodlit night) | **1.82 px** | 1.65 px | 15.54 px | 6 | 2 % | 120/120 |
 | `broadcast` (1920×1080, professional) | **2.96 px** | 2.75 px | 12.14 px | 7 | 1 % | 60/60 |
 | `CRO_MOR_194948` (1920×1080, one hand anchor) | **4.22 px** | 4.04 px | 13.87 px | 9 | — | 120/120 |
+| `g11710897` (1080×1920, phone at the touchline) | 26.15 px | 18.45 px | 35.66 px | 7 | — | 4/8 · carry only |
 | `g15449383` (1920×1080) | 4.47 px | 3.49 px | 72.60 px | **2** | **21 %** | not a verdict |
 
 **Read the markings column first.** Every error here is a max over the markings a frame scores, so
