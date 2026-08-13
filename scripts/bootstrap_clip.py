@@ -80,6 +80,10 @@ def main() -> None:
                     help="loose absolute coverage floor; NOT relative to the best candidate")
     ap.add_argument("--no-arcs", dest="require_arcs", action="store_false",
                     help="do not require the curved markings to land on paint")
+    ap.add_argument("--scale", type=float, default=1.0,
+                    help="score the paint at this fraction of the frame. 0.25 is ~15x faster and "
+                         "costs 1.2-2.4 px of worst line; the marking COUNT is unchanged. For "
+                         "ranking thousands of candidates, not for a verdict. Default full.")
     ap.add_argument("--min-arc-samples", type=int, default=8,
                     help="below this many arc samples the arc test abstains rather than rejects")
     ap.add_argument("--max-arc-px", type=float, default=6.0,
@@ -136,7 +140,8 @@ def main() -> None:
         `n_unmatched` is the second half and it is the direct statement of the failure: the camera
         predicted a marking there and the photograph has no paint there.
         """
-        r = frame_residual(info.frame_path(i), f, rv, c, frame=i, cx=cx, cy=cy)
+        r = frame_residual(info.frame_path(i), f, rv, c, frame=i, cx=cx, cy=cy,
+                           scale=args.scale)
         return r.median_px, r.n, r.n_unmatched / max(r.n, 1)
 
     def arcs(i, f, rv, c):

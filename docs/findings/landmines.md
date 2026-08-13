@@ -89,6 +89,13 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **Scale the CENTRELINE's coordinates, not the distance map.** Computing the paint at reduced
+  resolution and resizing `dist` back up reports worst lines of **684 to 1381 px** — pure noise —
+  because `centreline_pixels` takes the pixels where the transform is exactly zero and
+  interpolation leaves almost none. Scaling the spine's coordinates instead gives the real answer:
+  half resolution costs +0.11 to +0.82 px for 5×, quarter costs +1.16 to +2.35 px for 15×, and the
+  marking COUNT is unchanged at every scale. The difference between nonsense and a usable trade is
+  which of the two objects you stretch.
 - **A sparse rewrite wins or loses entirely on how sparse the data is.** Working the set pixels
   instead of the frame made `thin` **17× faster** — the paint is ~20 000 of 2 000 000 pixels. The
   identical trick on `ridge_map` is **3× SLOWER**, because `val >= RIDGE_MIN_V` covers 62–98 % of

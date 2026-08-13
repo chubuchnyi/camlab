@@ -206,7 +206,24 @@ EVIDENCE_CACHE = 4
 _EVIDENCE: OrderedDict = OrderedDict()
 
 
-def frame_evidence_cached(frame_path: Path):
+#: Paint computed at this fraction of the frame, for callers that are searching rather than
+#: judging. Measured on three clips at 1920×1080 — the marking COUNT is unchanged at every scale,
+#: so no evidence is lost, only precision:
+#:
+#:     scale   paint      worst line costs
+#:     1.00    64–109 ms  —
+#:     0.50    16–20 ms   +0.11 … +0.82 px      5x
+#:     0.35     8–9 ms    +0.30 … +1.62 px      9x
+#:     0.25     5 ms      +1.16 … +2.35 px     15x
+#:
+#: Read the cost relative, not absolute: on `g14604660` half resolution is 1.41 → 2.23 px, which is
+#: **58 % more error on the best clip in the set**. So this is for the bootstrap, which ranks
+#: thousands of cameras and needs an ordering, and never for the verdict, which is the number this
+#: project spends its days defending.
+SEARCH_SCALE = 0.25
+
+
+def frame_evidence_cached(frame_path: Path, scale: float = 1.0):
     """`(dist, surface, spine, tree, width, height)` for one frame, computed once.
 
     **This is 98 % of a score.** Profiled on `broadcast` at 1920×1080, interleaved so background
@@ -221,7 +238,7 @@ def frame_evidence_cached(frame_path: Path):
     from scipy.spatial import cKDTree
 
     st = frame_path.stat()
-    key = (str(frame_path), st.st_size, st.st_mtime_ns)
+    key = (str(frame_path), st.st_size, st.st_mtime_ns, round(float(scale), 4))
     hit = _EVIDENCE.get(key)
     if hit is not None:
         _EVIDENCE.move_to_end(key)
@@ -231,9 +248,21 @@ def frame_evidence_cached(frame_path: Path):
     if bgr is None:
         raise FileNotFoundError(frame_path)
     height, width = bgr.shape[:2]
-    dist, surface = paint_masks(bgr)
-    spine = centreline_pixels(dist)
-    got = (dist, surface, spine, cKDTree(spine) if len(spine) else None, width, height)
+    if scale >= 1.0:
+        dist, surface = paint_masks(bgr)
+        spine = centreline_pixels(dist)
+    else:
+        small = cv2.resize(bgr, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        dist, small_surface = paint_masks(small)
+        # The SPINE's coordinates are scaled back, not the distance map. Resizing `dist` and
+        # dividing looks equivalent and is not: `centreline_pixels` takes the pixels where the
+        # transform is exactly zero, and interpolation leaves almost none — measured, that path
+        # reports worst lines of 684 to 1381 px, which is noise wearing a number's clothes.
+        spine = centreline_pixels(dist) / scale
+        surface = cv2.resize(small_surface.astype(np.uint8), (width, height),
+                             interpolation=cv2.INTER_NEAREST) > 0
+    tree = cKDTree(spine) if len(spine) else None
+    got = (dist, surface, spine, tree, width, height, float(scale))
     _EVIDENCE[key] = got
     while len(_EVIDENCE) > EVIDENCE_CACHE:
         _EVIDENCE.popitem(last=False)
@@ -247,7 +276,8 @@ def clear_evidence_cache() -> None:
 
 def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
                    match_px: float = 40.0,
-                   cx: float | None = None, cy: float | None = None) -> Residual:
+                   cx: float | None = None, cy: float | None = None,
+                   scale: float = 1.0) -> Residual:
     """Score one camera against one decoded frame.
 
     `frame_path` must be a frame written by `camlab ingest`, i.e. already cropped — the same image
@@ -264,7 +294,8 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     NEIGHBOURING line finds paint at ~0 px and scores perfect. Nothing in a distance-to-paint
     measurement can see that; `line_error.line_errors` is what does, by insisting on correspondence.
     """
-    dist, surface, spine, tree, width, height = frame_evidence_cached(Path(frame_path))
+    dist, surface, spine, tree, width, height, scale = frame_evidence_cached(
+        Path(frame_path), scale)
     # Both of these used to build a Residual with five of its nine fields and raise TypeError. They
     # are the paths nothing exercises until a solve goes bad, so the metric crashed exactly on the
     # cameras worth measuring: `camera_ptz.json` has frames with a non-positive focal, and the
@@ -322,7 +353,12 @@ def frame_residual(frame_path: Path, focal: float, rvec, centre, frame: int = 0,
     # along the line and its across component is whatever that pixel's sideways offset happens to
     # be. Walking the normal gives the third answer the decomposition cannot — **no paint here** —
     # which is a defect in the detector, not in the camera, and has to be counted as its own thing.
-    across, on_normal = _across_on_normal(sub, normal, dist, match_px)
+    # `dist` lives at the scale it was computed at, so the walk steps in those pixels and its
+    # answer is converted back. At scale 0.25 the finest distance the map can express is 4 full-
+    # resolution pixels, which is the precision this trade buys speed with — and the reason it is
+    # for searching and not for judging.
+    across, on_normal = _across_on_normal(sub * scale, normal, dist, match_px * scale)
+    across = across / scale
     # A sample with no direction cannot be measured this way, so the whole of its distance is
     # charged. `_build_samples` drops the one-point markings (the penalty and centre spots), so
     # today this only fires where two consecutive samples project to the same pixel. Kept because
