@@ -879,6 +879,10 @@ $("e-refine").onclick = async () => {
       // tell which line is which, and the operator needs the opposite advice.
       err(`${d.matched_before} of ${d.lines} lines could be matched to a marking, `
           + `${d.min_matched} needed — aim closer by hand, then press again`);
+    } else if (d.refused_worse) {
+      err(`refused: the fit would take the worst marking from `
+          + `${d.worst_line_before?.toFixed(1)} to ${d.worst_line_after?.toFixed(1)} px `
+          + `against the paint — this frame is left as it was`);
     } else if (!d.moved) {
       // `refit._accept` takes the fit only if the worst offset fell AND no correspondence was
       // lost. Refusing is a result, not a failure, and the hand alignment is left alone.

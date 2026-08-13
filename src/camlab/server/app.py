@@ -597,6 +597,13 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
     after = frame_residual(info.frame_path(n), r.focal_px, r.rotation, r.position,
                            frame=n, cx=cx, cy=cy)
 
+    # AND it has to be better against the PAINT, which is the judge. `refit._accept` compares the
+    # solver's own worst matched offset, and that is not the same number: on `g14604660` frame 30
+    # a fit lowered its own objective while taking the worst marking from 1.37 px to 1.85 against
+    # the paint, and the button wrote it. An operator pressing "auto-fit" on a frame that is
+    # already good must not end up with a worse one.
+    worse = (np.isfinite(after.worst_line_px) and np.isfinite(before.worst_line_px)
+             and after.worst_line_px > before.worst_line_px)
     d_pos = float(np.linalg.norm(np.asarray(r.position) - np.asarray(cam["position"][n])))
     d_rot = float(np.linalg.norm(np.asarray(r.rotation) - np.asarray(cam["rotation"][n])))
     # Thresholds a human could see, not float noise. At machine epsilon a converged fit still
@@ -604,7 +611,8 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
     # lines allow" — which is the one answer that tells an operator to stop pressing it.
     # 1 mm, 1e-5 rad (0.0006 deg) and half a pixel of focal are all far below what the overlay
     # shows at 70 m.
-    moved = (abs(r.focal_px - cam["focal_px"][n]) > 0.5 or d_pos > 1e-3 or d_rot > 1e-5)
+    moved = (not worse
+             and (abs(r.focal_px - cam["focal_px"][n]) > 0.5 or d_pos > 1e-3 or d_rot > 1e-5))
     if moved:
         path = info.dir / "camera_manual.json"
         blob = json.loads(path.read_text()) if path.exists() else {}
@@ -625,6 +633,9 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
 
     return {
         "frame": n, "which": which, "moved": moved,
+        # Distinguished from "converged" so the viewer can say which happened: a fit that the paint
+        # rejects is a different message from one that had nothing left to give.
+        "refused_worse": bool(worse),
         "matched": int(r.n_before) >= MIN_MATCHED,
         "min_matched": int(MIN_MATCHED),
         "lines": int(len(segs)),

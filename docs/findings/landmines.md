@@ -89,6 +89,15 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **A fix in the repo is not a fix in the RUNNING server.** The atomic write below was committed
+  and then a SECOND `camera_manual.json` was corrupted anyway — `runs/g11710897`, same stray `}`.
+  The uvicorn process had been up since before the commit. Restart the server after touching it,
+  and check `ps -o lstart=` against the commit time before concluding a fix did not work.
+- **"auto-fit this frame" could leave a frame WORSE than it found it.** `refit._accept` compares
+  the solver's own worst matched offset, which is not the paint's worst line: on `g14604660`
+  frame 30 a fit lowered its own objective while taking the worst marking from **1.37 px to 1.85**
+  against the paint, and the button wrote it. A button an operator presses on an already-good
+  frame has to be judged by the judge, not by the thing being optimised.
 - **`camera_manual.json` was written non-atomically from five places and got corrupted.**
   `runs/g15449383/camera_manual.json` was found holding a complete JSON object followed by a stray
   `}` — two writers interleaving — and it holds the one thing in this project that cannot be
