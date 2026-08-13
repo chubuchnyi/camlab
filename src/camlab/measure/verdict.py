@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from camlab.measure.residual import MIN_SUPPORTING_MARKINGS, frame_residual
+from camlab.parallel import map_items
 
 #: A camera whose frames mostly cannot be scored is not being judged, whatever number comes out.
 #: Under this fraction of supported frames the verdict is withheld rather than qualified.
@@ -78,6 +79,25 @@ class Verdict:
         return f"{base} · {self.under_20}/{self.n_supported} supported frames under 20 px"
 
 
+def _score_one(job):
+    """One frame scored, as plain numbers. Top-level and picklable, for `parallel.map_items`.
+
+    Each worker is pinned to ONE OpenCV thread. Without that, N processes each start OpenCV's own
+    pool and the machine gets N x cores threads on cores cores — measured on 60 frames of
+    `broadcast`, 14 workers came out SLOWER than one, 19.5 s against 15.5.
+    """
+    from pathlib import Path
+
+    import cv2
+
+    cv2.setNumThreads(1)
+
+    path, i, focal, rvec, pos, cx, cy = job
+    r = frame_residual(Path(path), focal, rvec, pos, frame=i, cx=cx, cy=cy)
+    spot = max((v[2] for v in r.per_line.values() if v[1] >= 8), default=float("nan"))
+    return (r.worst_line_px, spot, r.worst_across_px, r.n_markings, r.n, r.supported)
+
+
 def judge(clip_id: str, camera: dict, *, every: int = 1, frames=None) -> Verdict:
     """Score `camera` against the paint of `clip_id`. `camera` is a parsed camera file."""
     from camlab.runs import ClipInfo
@@ -86,21 +106,26 @@ def judge(clip_id: str, camera: dict, *, every: int = 1, frames=None) -> Verdict
     cx, cy = float(camera["cx"]), float(camera["cy"])
     idx = list(frames) if frames is not None else list(range(0, info.n_frames, max(1, every)))
 
+    # One process per frame. Each does its own paint and returns five numbers, so nothing large
+    # crosses a boundary and the per-frame cache in `residual` is irrelevant here — a sweep touches
+    # every frame once. Measured: `paint_masks` runs at 1.3 cores on its own, against the 10.8
+    # OpenCV already spreads SIFT over, so this is the half that was actually serial.
+    jobs = [(str(info.frame_path(i)), i, camera["focal_px"][i], list(camera["rotation"][i]),
+             list(camera["position"][i]), cx, cy)
+            for i in idx if camera["focal_px"][i] > 0]
     wl, ws, wa, mk, ns, sup, u20 = [], [], [], [], [], 0, 0
-    for i in idx:
-        if not camera["focal_px"][i] > 0:
+    for got in map_items(_score_one, jobs):
+        if got is None:
             continue
-        r = frame_residual(info.frame_path(i), camera["focal_px"][i], camera["rotation"][i],
-                           camera["position"][i], frame=i, cx=cx, cy=cy)
-        spot = max((v[2] for v in r.per_line.values() if v[1] >= 8), default=float("nan"))
-        wl.append(r.worst_line_px)
+        line, spot, across, markings, n, supported = got
+        wl.append(line)
         ws.append(spot)
-        wa.append(r.worst_across_px)
-        mk.append(r.n_markings)
-        ns.append(r.n)
-        if r.supported:
+        wa.append(across)
+        mk.append(markings)
+        ns.append(n)
+        if supported:
             sup += 1
-            if r.worst_line_px < 20.0:
+            if line < 20.0:
                 u20 += 1
     if not wl:
         return Verdict(float("nan"), float("nan"), float("nan"), 0, 0, 0, 0, 0)

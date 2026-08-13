@@ -89,6 +89,17 @@ Ordered by how much they cost.
   where it was designed. Swept over four frames of `fan` and three of `broadcast` it HURTS on three
   of them — `fan` 40 goes 2.6 m to 10.3 m — because what it removes elsewhere is the touchline,
   which genuinely runs near the surface edge and is the longest line in the picture.
+- **This workload is memory-bound, and more cores do nothing.** Scoring 60 frames on 8 processes,
+  each pinned to one OpenCV thread: **7.8 cores busy, 130 s of CPU against 20, and the same 16.8 s
+  wall clock**. `paint_masks` costs MORE per pixel as the frame grows — 64, 76, 107 ms/Mpx at 0.1,
+  0.5 and 2.1 Mpx — because `ridge_map` makes 24 full passes and falls out of cache. Parallelism
+  spreads the waiting, it does not shorten it. What worked was removing the work: caching the paint
+  per frame is 36.8×. `parallel.default_workers()` returns 1 on purpose.
+- **OpenCV already threads its own operators, so measure before parallelising them.** `measure_pairs`
+  runs at **10.8 cores busy** unaided; a process pool over it came out slower (10.4 s → 11.2 s), and
+  `cv2.setNumThreads(1)` takes it from 12.7 s to 38.4. The repo's own line — "one core is the
+  requirement, 342 ms on one thread against 324 on sixteen" — was reading the Python half of a job
+  whose OpenCV half was already on ten cores.
 - **The turf detector called the SKY the pitch.** `_turf` keyed on the frame's dominant bright
   saturated hue with no bound on where that hue could be. On `g11710897` — a phone at the touchline
   at dusk — the biggest such region is the sky, so the peak came out at **108**, which is blue: the
