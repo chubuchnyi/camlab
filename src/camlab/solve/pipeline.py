@@ -18,6 +18,7 @@ The order is not arbitrary and every step earned its place by measurement:
        itself out on and keep the best. Better on the paint AND renderable
        (`the-camera-moves-along-a-line-and-that-is-the-bug.md`).
     5. **smooth** — median-filter each parameter, keeping only the frames the paint agrees with.
+    6. **polish** — go back over the frames the chain left worst and try their neighbours.
 
 Progress is reported through a callback rather than printed, because the caller here is a browser.
 """
@@ -76,12 +77,34 @@ STAGES = [
                                                  "--out", "camera_fixed.json"]),
     ("smooth", "smooth_camera.py", ["--from", "camera_fixed.json",
                                     "--out", "camera_smooth.json"]),
+    # Fifth, and after the median filter rather than before it, which is the whole point. Self-heal
+    # already offers a neighbour's camera to a lost frame — but it runs on `camera_carry.json`, and
+    # shared-centre then moves every frame onto one optical centre and smoothing moves every frame
+    # again, so a frame that was fine when self-heal saw it can be the worst in the clip by the end.
+    # An operator scrubbing `g14604660` found exactly that and fixed frames by hand.
+    #
+    # Measured, worst frame in the clip, before -> after:
+    #     broadcast        7.03 -> 4.33     14 of 60 frames changed
+    #     14604731        28.73 -> 22.74    10 of 180
+    #     CRO_MOR_194948   6.80 -> 5.56      2 of 120
+    #     wp_194948        6.41 -> 5.61      2 of 120
+    #     fan              4.06 -> 3.21      1 of 120
+    #     NET_ARG_225042  59.88 -> 57.63    10 of 60, and eight frames at 40-60 px went to 5-7
+    # Medians barely move because only outliers are touched. Not one clip got worse: a candidate is
+    # kept only if it beats what is there AND scores on no fewer markings.
+    ("polish", "polish_camera.py", ["--from", "camera_smooth.json",
+                                    "--out", "camera_polished.json"]),
 ]
 
 
 #: Every camera file the chain writes, read off STAGES so this cannot drift from what it does.
 OUTPUTS = frozenset(extra[extra.index("--out") + 1]
                     for _label, _script, extra in STAGES if "--out" in extra)
+
+#: What the chain hands back — the last stage's output, read off STAGES so it cannot drift.
+FINAL_CAMERA = next((extra[extra.index("--out") + 1]
+                     for _l, _s, extra in reversed(STAGES) if "--out" in extra),
+                    "camera_smooth.json")
 
 
 def anchors_for(clip_id: str, seed: str, fallback: int = 0) -> list[int]:
@@ -174,5 +197,7 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
         if on_progress:
             on_progress(i + 1, len(STAGES), label, "done")
     out["ok"] = True
-    out["camera"] = "camera_smooth.json"
+    # The polish stage's output, when it ran. Named from STAGES rather than written out, so adding
+    # or reordering a stage cannot leave this pointing at a file two stages back.
+    out["camera"] = FINAL_CAMERA
     return out

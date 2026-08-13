@@ -184,3 +184,14 @@ def test_the_pipeline_anchors_on_every_aimed_frame_not_one():
     assert '"--anchor", str(anchor)' not in src, "back to a single anchor"
     assert '",".join' in src, "the anchor list is not being passed as a list"
     assert "anchors_for" in src, "nothing looks up what the operator aimed"
+
+
+def test_the_chain_hands_back_its_last_output_not_a_hardcoded_name():
+    """`out["camera"]` was the literal "camera_smooth.json" while the chain gained a fifth stage
+    after it. A viewer opening the named file would have shown the camera from two stages back and
+    called it the result."""
+    from camlab.solve.pipeline import FINAL_CAMERA, OUTPUTS, STAGES
+
+    last = [extra for _l, _s, extra in STAGES if "--out" in extra][-1]
+    assert FINAL_CAMERA == last[last.index("--out") + 1]
+    assert FINAL_CAMERA in OUTPUTS
