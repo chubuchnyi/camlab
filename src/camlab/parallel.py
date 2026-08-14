@@ -115,9 +115,32 @@ def map_items(fn: Callable[[Any], Any], items: Iterable[Any], *,
     if n <= 1 or len(todo) < MIN_ITEMS_FOR_A_POOL:
         return [fn(x) for x in todo]
 
+    import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
-    with ProcessPoolExecutor(max_workers=min(n, len(todo))) as pool:
+    # **`spawn`, not the platform default**, which on Linux is `fork` — and under `fork` this pool
+    # deadlocks inside the solver.
+    #
+    # `verdict.judge` is the last thing `solve_carry` does and the only caller of `map_items`, so
+    # from the moment `default_workers()` went from 1 to 2 on 2026-08-13 **every solve ended in a
+    # hang**. Measured on `g11710897`, one anchor, nothing else changed:
+    #
+    #     fork, 2 workers    still hung at 3000 s — parent and both children in `futex_do_wait`
+    #     spawn, 2 workers   22 s
+    #     no pool at all     23 s, and every reported number identical to the spawn run
+    #
+    # It reads as "this clip is slow", which is why it survived a day and four abandoned runs.
+    #
+    # **The mechanism is not established.** The obvious candidate — forking a process that has
+    # already started OpenCV's threads, so the child inherits mutexes held by threads that do not
+    # exist in it — did NOT reproduce on a synthetic probe: cv2 in the parent, cv2 in eight forked
+    # children, completes fine. So what is recorded here is what was measured, not a diagnosis, and
+    # the probe lives in `tests/test_parallel_pool.py` so the next person starts from a fact.
+    #
+    # A spawned worker starts a fresh interpreter and re-imports, which is why `fn` has to be
+    # importable by name — already required above — and why `MIN_ITEMS_FOR_A_POOL` exists.
+    ctx = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=min(n, len(todo)), mp_context=ctx) as pool:
         if ordered:
             return list(pool.map(fn, todo))
         return [f.result() for f in pool.map(fn, todo)]

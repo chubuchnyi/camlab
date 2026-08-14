@@ -331,6 +331,14 @@ Ordered by how much they cost.
 
 ## Environment
 
+- **The process pool deadlocks under `fork`, and it sits at the end of every solve.**
+  `verdict.judge` is the last thing `solve_carry` does and the only caller of `map_items`, so from
+  the moment `default_workers()` went 1 -> 2 on 2026-08-13, every solve hung. On `g11710897`, one
+  anchor, nothing else changed: **fork 2 workers still hung at 3000 s** with parent and both
+  children in `futex_do_wait`; **spawn 2 workers 22 s**; **no pool 23 s**, every number identical.
+  It reads as "this clip is slow" and cost a day and four abandoned runs. The mechanism is NOT
+  established - the obvious fork-inherited-mutex story did not reproduce on a synthetic probe, so
+  `tests/test_parallel_pool.py` pins the measured property and not a diagnosis.
 - **`pkill -f <pattern>` kills the shell that is running it.** The pattern appears in that shell's
   own command line, so `pkill -f solve_carry.py` from a script that mentions `solve_carry.py`
   matches itself and everything started after it in the same command dies too. Cost three runs on
