@@ -124,3 +124,31 @@ def test_a_crop_moves_the_principal_point():
         n_frames=1, first_frame=0, crop=None, source_width=1920, source_height=1080,
     )
     assert uncropped.principal_point == (960.0, 540.0), "no crop, no offset"
+
+
+# ---------------------------------------------------------------------------------------------
+# Which camera the viewer opens, and what a route does when the caller does not say.
+# ---------------------------------------------------------------------------------------------
+
+def test_the_viewer_opens_the_chain_s_last_output_not_the_stage_before_it():
+    """`landmines.md` records this shape twice already: the viewer showed the previous solve and a
+    human caught it. The chain gained `polish` as a fifth stage on 2026-08-13 and the preference
+    list did not, so every clip opened on `camera_smooth.json` — one stage behind the result — and
+    every number an operator read was the previous stage's."""
+    from camlab.server.app import _CAMERA_PREFERENCE
+    from camlab.solve.pipeline import FINAL_CAMERA
+
+    assert _CAMERA_PREFERENCE[0] == FINAL_CAMERA, (
+        f"the viewer prefers {_CAMERA_PREFERENCE[0]} over the chain's own output {FINAL_CAMERA}"
+    )
+    assert len(set(_CAMERA_PREFERENCE)) == len(_CAMERA_PREFERENCE), "a name appears twice"
+
+
+@pytest.mark.skipif(not (runs_root() / "g11710897").exists(), reason="needs the g11710897 run")
+def test_a_route_asked_for_no_camera_picks_one_rather_than_404ing():
+    """Six routes defaulted to the literal string `camera_auto.json`. `g11710897` has five cameras
+    and none of them is that one, so `GET /api/run/g11710897/residual/39` answered
+    "g11710897 has no camera_auto.json" on a clip that is solved."""
+    r = client.get("/api/run/g11710897/residual/0")
+    assert r.status_code == 200, r.json()
+    assert "camera_auto.json" not in str(r.json()), r.json()

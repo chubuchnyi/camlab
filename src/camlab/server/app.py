@@ -86,9 +86,19 @@ def _camera_files(info) -> list[str]:
 #: to it, best last-solved first. `camera_auto.json` is at the END rather than hardcoded as the
 #: default, which it used to be: `broadcast` has never had one — its cameras are `known`, `carry`,
 #: `healed`, `fixed`, `smooth` — so selecting that clip 404'd and the viewer showed nothing.
-_CAMERA_PREFERENCE = ("camera_smooth.json", "camera_fixed.json", "camera_healed.json",
-                      "camera_carry.json", "camera_auto.json", "camera_known.json",
-                      "camera_start.json")
+#: `camera_polished.json` leads, and it is read off `solve.pipeline` rather than spelled here: the
+#: chain gained a fifth stage on 2026-08-13 and this list did not, so the viewer opened
+#: `camera_smooth.json` — one stage BEHIND the result — and every number an operator read off it was
+#: the previous stage's. `landmines.md` already records this exact shape twice.
+def _preference() -> tuple[str, ...]:
+    from camlab.solve.pipeline import FINAL_CAMERA
+
+    rest = ("camera_smooth.json", "camera_fixed.json", "camera_healed.json",
+            "camera_carry.json", "camera_auto.json", "camera_known.json", "camera_start.json")
+    return (FINAL_CAMERA, *(n for n in rest if n != FINAL_CAMERA))
+
+
+_CAMERA_PREFERENCE = _preference()
 
 
 def _default_camera(info) -> str:
@@ -289,7 +299,7 @@ def _num(v: float) -> float | None:
 
 
 @app.get("/api/run/{clip_id}/residual/{n}")
-def residual(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
+def residual(clip_id: str, n: int, which: str = "") -> dict:
     """How far this frame's camera puts the pitch from where the pitch is actually painted.
 
     The number behind window B. `n_scored` is not decoration: only markings that land on the
@@ -297,6 +307,11 @@ def residual(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
     unscoreable and posts a flattering median on the survivors. Read the two together, always.
     """
     info = ClipInfo.load(clip_id)
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
@@ -363,7 +378,7 @@ def paint_png(clip_id: str, n: int) -> Response:
 
 @app.get("/api/run/{clip_id}/lines/{n}")
 def lines(clip_id: str, n: int, method: str = "hough",
-          which: str = "camera_auto.json") -> dict:
+          which: str = "") -> dict:
     """Line-to-line error for one frame, in IMAGE coordinates, ready to draw and to measure.
 
     Everything here is in the pixels of the frame on disk, so the viewer can put it straight into
@@ -373,6 +388,11 @@ def lines(clip_id: str, n: int, method: str = "hough",
     import cv2
 
     info = ClipInfo.load(clip_id)
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside 0..{len(cam['frames']) - 1}")
@@ -424,9 +444,14 @@ def lines(clip_id: str, n: int, method: str = "hough",
 
 
 @app.get("/api/run/{clip_id}/manual/{n}")
-def manual_get(clip_id: str, n: int, which: str = "camera_auto.json") -> dict:
+def manual_get(clip_id: str, n: int, which: str = "") -> dict:
     """This frame's camera as READABLE ANGLES, ready to be typed into."""
     info = ClipInfo.load(clip_id)
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside the clip")
@@ -518,7 +543,7 @@ def solve_status(clip_id: str) -> dict:
 
 
 @app.post("/api/run/{clip_id}/flip")
-def flip(clip_id: str, which: str = "camera_auto.json") -> dict:
+def flip(clip_id: str, which: str = "") -> dict:
     """Turn the whole clip's camera through 180° about the centre spot.
 
     A pitch is **exactly** symmetric under that half-turn, so the rotated camera scores bit for bit
@@ -533,6 +558,11 @@ def flip(clip_id: str, which: str = "camera_auto.json") -> dict:
     import json
 
     info = ClipInfo.load(clip_id)
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     path = info.dir / "camera_manual.json"
     blob = json.loads(path.read_text()) if path.exists() else {}
@@ -573,7 +603,12 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
     from camlab.solve.refit import refit_frame_lm
 
     info = ClipInfo.load(clip_id)
-    which = str(body.get("which", "camera_auto.json"))
+    which = str(body.get("which", "") or "")
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside the clip")
@@ -669,7 +704,12 @@ def manual_set(clip_id: str, n: int, body: dict) -> dict:
     import json
 
     info = ClipInfo.load(clip_id)
-    which = str(body.get("which", "camera_auto.json"))
+    which = str(body.get("which", "") or "")
+    # Resolved HERE and not inside the loader: every one of these routes goes on to use
+    # `which` as the key into `camera_manual.json`, so resolving it out of sight would
+    # leave the key empty and lose the operator's edits without a word. Same shape as the
+    # seed-snapshot defect of 2026-08-14.
+    which = which or _default_camera(info)
     cam = _load_camera(info, which)
     if not (0 <= n < len(cam["frames"])):
         raise HTTPException(404, f"frame {n} outside the clip")
@@ -719,12 +759,13 @@ def manual_set(clip_id: str, n: int, body: dict) -> dict:
 
 
 @app.delete("/api/run/{clip_id}/manual/{n}")
-def manual_clear(clip_id: str, n: int, which: str = "camera_auto.json",
+def manual_clear(clip_id: str, n: int, which: str = "",
                  scope: str = "frame") -> dict:
     """Drop hand edits — this frame's, or all of them. The solve underneath is never touched."""
     import json
 
     info = ClipInfo.load(clip_id)
+    which = which or _default_camera(info)
     path = info.dir / "camera_manual.json"
     if not path.exists():
         return {"ok": True, "edited_frames": 0}
