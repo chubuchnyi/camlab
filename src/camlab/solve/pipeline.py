@@ -134,6 +134,20 @@ def anchors_for(clip_id: str, seed: str, fallback: int = 0) -> list[int]:
     return frames or [fallback]
 
 
+def unread_aims(clip_id: str, seed: str) -> dict[str, list[str]]:
+    """Hand edits on disk that this seed will not read, so the caller can say so out loud.
+
+    Only the key naming the seed is read, for the reasons in `solve/hand.py`. On `g11710897` that
+    silence hid **twelve** aimed frames — the operator had been scrubbing `camera_smooth.json` when
+    he aimed them — while the three the default seed did read were echoes of the seed itself, and
+    the clip was called unsolvable for a day.
+    """
+    from camlab.runs import ClipInfo
+    from camlab.solve.hand import aims_under_other_keys
+
+    return aims_under_other_keys(ClipInfo.load(clip_id).dir, seed)
+
+
 def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "camera_start.json",
         on_progress=None, timeout_s: int = 3600) -> dict:
     """Run every stage. Returns `{stage: last line of its output}` plus `ok` and `camera`.
@@ -148,6 +162,16 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
         anchor = anchors_for(clip_id, seed)
     picks = [anchor] if isinstance(anchor, int) else list(anchor)
     out: dict = {"stages": {}, "ok": False, "camera": None, "seed": seed, "anchors": picks}
+    # Say what is on disk and not being read. Not a warning about a hypothetical: this is the fact
+    # that, left unsaid, kept twelve of `g11710897`'s aims out of every run for a day.
+    other = unread_aims(clip_id, seed)
+    if other:
+        out["unread_aims"] = other
+        listed = "; ".join(f"{k} ({len(v)} frames)" for k, v in sorted(other.items()))
+        out["stages"]["aims"] = (
+            f"hand edits exist that this seed does not read: {listed}. Seed from that file to "
+            f"use them."
+        )
     if not (SCRIPTS / "solve_carry.py").exists():
         out["stages"]["setup"] = (
             f"the stage scripts are not at {SCRIPTS}. Set CAMLAB_SCRIPTS to the directory holding "

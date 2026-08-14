@@ -23,6 +23,26 @@ identical to a hand alignment, so a loader that reads shape alone cannot tell th
 `landmines.md` already records this exact write destroying a frame from 3.6 px to 41.1 px. It is
 separable exactly rather than heuristically: in a broadcast entry the rotation and focal are
 bit-identical to the solve underneath, because only the position was replaced.
+
+**Edits are read only under the key naming the solve this run is seeded from — and that is a
+limitation, not a design.** The store is keyed by solve name; the entries themselves are absolute
+world poses, so an aim made against one solve would be a perfectly good anchor for another. Reading
+every key is nonetheless not safe, and the reason is worth keeping because it cost a morning:
+
+- the broadcast test above needs the solve the entries overlay, and for chain outputs that file is
+  **overwritten by the next run**, so for old edits there is nothing left to compare against;
+- **a shared position does not mark a broadcast.** Refuted on the clips this matters for: all 12 of
+  `g11710897`'s aims sit at (56, 25, 1.5) because the phone does not move and only the rotation was
+  aimed. Rejecting shared positions would delete exactly the pitch-level work;
+- **file mtimes cannot date an entry.** `camera_manual.json` is rewritten whole on every edit, so
+  its timestamp is about the newest edit anywhere in it. The test read "reference is stale" for
+  `g11710897`, whose reference is fine, and "reference is current" for `fan`, whose five references
+  have all been rewritten since.
+
+So old edits cannot be classified after the fact, and the repair belongs at write time: the viewer
+should record, in the entry, the pose it was aimed away from. Until then `aims_under_other_keys`
+reports what is there without offering it, because the failure that actually happened was silence —
+twelve aims on disk, a clip called unsolvable, and nothing connecting the two.
 """
 
 from __future__ import annotations
@@ -53,19 +73,39 @@ def hand_candidates(run_dir: Path, seed_name: str, seed_camera: dict | None = No
     """
     out: dict[str, list[tuple[str, dict]]] = {}
 
-    def offer(source: str, edits: dict) -> None:
-        for frame, entry in _aims(edits, seed_camera).items():
+    def offer(source: str, edits: dict, reference: dict | None) -> None:
+        for frame, entry in _aims(edits, reference).items():
             out.setdefault(frame, []).append((source, entry))
 
-    manual = Path(run_dir) / "camera_manual.json"
+    run_dir = Path(run_dir)
+    manual = run_dir / "camera_manual.json"
     if manual.exists():
-        offer(manual.name, json.loads(manual.read_text()).get(seed_name, {}))
+        offer(manual.name, json.loads(manual.read_text()).get(seed_name, {}), seed_camera)
 
     if calib_dir is not None and clip_id is not None:
         legacy = next(Path(calib_dir).glob(f"{clip_id}-hand-aligned-*.json"), None)
         if legacy is not None:
-            offer(legacy.name, json.loads(legacy.read_text()).get(seed_name, {}))
+            offer(legacy.name, json.loads(legacy.read_text()).get(seed_name, {}), seed_camera)
     return out
+
+
+def aims_under_other_keys(run_dir: Path, seed_name: str) -> dict[str, list[str]]:
+    """`{key: [frame, ...]}` for hand edits aimed against some OTHER solve. Reported, not used.
+
+    Nothing here can judge them — see the module docstring for the three discriminators that were
+    measured and refuted — but leaving them silent is how twelve aims on `g11710897` stayed
+    invisible while the clip was called unsolvable. A caller that prints this gives the operator the
+    one fact they need: their work is on disk, under a name this run is not reading.
+    """
+    manual = Path(run_dir) / "camera_manual.json"
+    if not manual.exists():
+        return {}
+    try:
+        store = json.loads(manual.read_text())
+    except ValueError:
+        return {}
+    return {k: sorted(v, key=int) for k, v in store.items()
+            if k != seed_name and isinstance(v, dict) and v}
 
 
 def _aims(edits: dict, seed_camera: dict | None) -> dict:
@@ -78,8 +118,50 @@ def _aims(edits: dict, seed_camera: dict | None) -> dict:
             continue
         if seed_camera is not None and _is_position_broadcast(entry, seed_camera, int(frame)):
             continue
+        if seed_camera is not None and _is_echo(entry, seed_camera, int(frame)):
+            continue
         keep[frame] = entry
     return keep
+
+
+#: The viewer rounds when it writes, so an untouched entry comes back a fraction off the solve it
+#: was copied from. Both tolerances are set from the measurement rather than guessed, on
+#: `g11710897`'s three entries under `camera_start.json`:
+#:
+#:     frame  0   d_rot 2.47e-05   d_pos 0.0000   d_focal 0.0592     <- nothing was moved
+#:     frame  2   d_rot 2.01e-01   d_pos 59.50     d_focal 571.94    <- aimed
+#:     frame 39   d_rot 2.74e-01   d_pos 55.00     d_focal 0.0592    <- aimed
+#:
+#: Four orders of magnitude separate the rounding from the smallest real aim. 1e-4 rad is 0.0057
+#: degrees — twenty times finer than the viewer's smallest rotation step, so a single minimum nudge
+#: still reads as an aim.
+ECHO_FOCAL_PX = 0.5
+ECHO_ROT_RAD = 1e-4
+ECHO_POS_M = 1e-4
+
+
+def _is_echo(entry: dict, seed_camera: dict, i: int) -> bool:
+    """Nothing was moved: every field matches the solve, to the precision the viewer writes at.
+
+    Distinct from a position broadcast, where the position *did* change. This is the shape left by
+    opening a frame and putting it back, and it is not an aim by anybody.
+
+    Dropping it costs nothing, which is the point: `solve_carry` already scores the seed's own pose
+    at every anchor, so an entry equal to that pose adds no candidate. What it does add is a
+    frame to the anchor list — `g11710897` reported three anchors under `camera_start.json` and all
+    three were this, while twelve real aims sat under another key and were not being read at all.
+    """
+    try:
+        rot = np.asarray(seed_camera["rotation"][i], float)
+        pos = np.asarray(seed_camera["position"][i], float)
+        focal = float(seed_camera["focal_px"][i])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+    return bool(
+        np.allclose(np.asarray(entry["rotation"], float), rot, rtol=0, atol=ECHO_ROT_RAD)
+        and np.allclose(np.asarray(entry["position"], float), pos, rtol=0, atol=ECHO_POS_M)
+        and abs(float(entry["focal_px"]) - focal) <= ECHO_FOCAL_PX
+    )
 
 
 def _is_position_broadcast(entry: dict, seed_camera: dict, i: int) -> bool:

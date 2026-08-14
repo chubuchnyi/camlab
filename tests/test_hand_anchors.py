@@ -96,11 +96,63 @@ def test_the_fan_shape_end_to_end(tmp_path):
         assert [src for src, _e in got[frame]] == ["fan-hand-aligned-2026-08-11.json"]
 
 
-def test_edits_are_keyed_by_the_solve_they_overlay(tmp_path):
-    """An anchor aimed against one solve is not an anchor for another: same frame, different camera
-    underneath, and the seven numbers mean different things."""
+def test_only_the_seeds_own_key_is_read_and_the_rest_are_reported(tmp_path):
+    """The limitation, and the thing that makes it survivable.
+
+    The entries are absolute world poses, so an aim made against one solve WOULD be a good anchor
+    for another, and reading every key was tried. It is not safe: the broadcast test needs the solve
+    the entries overlay, and for chain outputs the next run overwrites that file. Two reference-free
+    substitutes were measured and both are refuted in `solve/hand.py` — a shared position marks a
+    static phone, not a broadcast, and the store's mtime is about its newest edit anywhere.
+
+    So the read stays narrow and the silence does not: twelve aims sat under another key on
+    `g11710897` while the clip was called unsolvable, and nothing connected the two.
+    """
+    from camlab.solve.hand import aims_under_other_keys
+
     _write(tmp_path / "camera_manual.json", {"camera_start.json": {"0": AIM}})
     assert hand_candidates(tmp_path, "camera_smooth.json", seed_camera=SEED) == {}
+    assert aims_under_other_keys(tmp_path, "camera_smooth.json") == {"camera_start.json": ["0"]}
+    assert aims_under_other_keys(tmp_path, "camera_start.json") == {}, "the read key is not unread"
+
+
+def test_an_entry_that_matches_the_solve_exactly_is_not_an_aim(tmp_path):
+    """`g11710897` reported three anchors under `camera_start.json` and every one was this: the
+    seed's own pose written back, differing only in the focal the viewer rounds on write. Nobody
+    moved anything, and `solve_carry` already scores the seed's pose at every anchor, so keeping
+    these adds no candidate and three phantom anchors."""
+    echo = {"focal_px": round(SEED["focal_px"][1]),            # 5001.0 -> the viewer's rounding
+            "rotation": list(SEED["rotation"][1]),
+            "position": list(SEED["position"][1])}
+    _write(tmp_path / "camera_manual.json", {"c.json": {"0": AIM, "1": echo}})
+    assert sorted(hand_candidates(tmp_path, "c.json", seed_camera=SEED)) == ["0"]
+
+
+def test_a_real_aim_is_not_mistaken_for_an_echo(tmp_path):
+    """The filter must not eat the thing it sits next to. A focal moved by more than the write
+    rounding, everything else untouched, is an operator zooming — and on a plane the focal is the
+    parameter that trades against distance, so it is exactly what someone would aim alone."""
+    zoomed = {"focal_px": SEED["focal_px"][1] + 2.0,
+              "rotation": list(SEED["rotation"][1]),
+              "position": list(SEED["position"][1])}
+    _write(tmp_path / "camera_manual.json", {"c.json": {"1": zoomed}})
+    assert sorted(hand_candidates(tmp_path, "c.json", seed_camera=SEED)) == ["1"]
+
+
+def test_a_static_camera_aimed_frame_by_frame_is_not_a_broadcast(tmp_path):
+    """`g11710897`, and the reason the obvious shortcut is wrong.
+
+    All twelve of its aims sit at exactly (56, 25, 1.5): a phone held in one spot, where only the
+    rotation is aimed. That is the same shape a position broadcast has — one position over many
+    frames — so "shared position means broadcast" would delete the entire pitch-level case. What
+    separates them is the rotation, which here is the operator's and there is the solve's.
+    """
+    fixed = [56.0, 25.0, 1.5]
+    aims = {str(i): {"focal_px": 2100.0, "rotation": [0.40 + 0.01 * i, 2.09, -1.87],
+                     "position": list(fixed)} for i in range(3)}
+    _write(tmp_path / "camera_manual.json", {"c.json": aims})
+    got = hand_candidates(tmp_path, "c.json", seed_camera=SEED)
+    assert sorted(got) == ["0", "1", "2"], "a static camera's aims were taken for a broadcast"
 
 
 def test_a_half_written_anchor_is_not_used(tmp_path):
