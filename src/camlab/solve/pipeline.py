@@ -186,22 +186,30 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
     #
     # Not refused, because re-solving from a refined camera is a real thing to want. Snapshotted:
     # the run reads a copy, so whatever it overwrites, what it STARTED from is still on disk.
+    from camlab.runs import ClipInfo
+
+    run_dir = ClipInfo.load(clip_id).dir
     hand_key = seed
     requested_seed = seed
+    if not (run_dir / seed).exists():
+        # Said here rather than left to a stage, which dies on it with a bare pathlib traceback and
+        # no mention of the seed. This is reachable in one step: seed from a chain output, let the
+        # run be killed after the clear, and the file the next run wants is gone.
+        out["stages"]["seed"] = (
+            f"there is no {seed} to seed from. If it is one this chain writes, a previous run "
+            f"removed it; {SEED_SNAPSHOT} holds what that run started from."
+        )
+        return out
     if seed in OUTPUTS:
-        from camlab.runs import ClipInfo
-
-        info = ClipInfo.load(clip_id)
-        src = info.dir / seed
-        if src.exists():
-            snap = info.dir / SEED_SNAPSHOT
-            snap.write_text(src.read_text())
-            out["seed"] = seed = SEED_SNAPSHOT
-            hand_key = requested_seed
-            out["stages"]["seed"] = (
-                f"seeded from a copy of {src.name} kept as {SEED_SNAPSHOT}, because the chain "
-                f"overwrites {src.name} itself"
-            )
+        src = run_dir / seed
+        snap = run_dir / SEED_SNAPSHOT
+        snap.write_text(src.read_text())
+        out["seed"] = seed = SEED_SNAPSHOT
+        hand_key = requested_seed
+        out["stages"]["seed"] = (
+            f"seeded from a copy of {src.name} kept as {SEED_SNAPSHOT}, because the chain "
+            f"overwrites {src.name} itself"
+        )
 
     # Clear every output this chain is about to write, BEFORE writing any of it.
     #
@@ -218,11 +226,15 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
     #
     # Deleting rather than stamping, because a missing file makes every reader fail loudly and a
     # stamp only helps the readers that check it.
-    from camlab.runs import ClipInfo
-
-    run_dir = ClipInfo.load(clip_id).dir
+    #
+    # **Except the file this run is seeded from**, which is kept even though it is an output. The
+    # first version deleted it, and that is a one-way door: seeding from `camera_smooth.json`
+    # snapshotted it, deleted the original, and the run was then killed — after which nothing could
+    # ever seed from that name again, because the file it names no longer exists. The snapshot makes
+    # deleting it safe for THIS run and useless for the next one. The stage that owns it overwrites
+    # it in due course anyway.
     stale = []
-    for name in sorted(OUTPUTS):
+    for name in sorted(OUTPUTS - {requested_seed}):
         path = run_dir / name
         if path.exists():
             path.unlink()

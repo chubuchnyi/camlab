@@ -294,6 +294,9 @@ def _fake_run(tmp_path, monkeypatch, *, fail_at=None):
     root = tmp_path / "runs"
     (root / "c").mkdir(parents=True)
     (root / "c" / "clip.json").write_text(json.dumps(CLIP))
+    # The default seed has to be on disk: `run` now refuses a seed it cannot find rather than
+    # letting the first stage die on a bare pathlib traceback that never mentions the seed.
+    (root / "c" / "camera_start.json").write_text(json.dumps(SEED))
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     for _label, script, _extra in pipeline.STAGES:
@@ -340,3 +343,40 @@ def test_a_chain_that_dies_early_leaves_no_later_stage_behind(tmp_path, monkeypa
     assert not (clip_dir / FINAL_CAMERA).exists(), (
         "a stale final camera outlived the run that was supposed to replace it"
     )
+
+
+def test_the_seed_survives_the_clear_when_it_is_one_of_the_outputs(tmp_path, monkeypatch):
+    """The clear was a one-way door on its first version.
+
+    Seeding from `camera_smooth.json` snapshots it and then — since it is an output — deleted it.
+    That is fine for the run that took the snapshot and fatal for the next one: the file the caller
+    names no longer exists, so the seed can never be used again. It happened on `g11710897` within
+    an hour of the clear being added, and the stage died on a bare pathlib traceback that did not
+    mention the seed.
+    """
+    from camlab.solve.pipeline import FINAL_CAMERA, run
+
+    clip_dir = _fake_run(tmp_path, monkeypatch)
+    seed = clip_dir / FINAL_CAMERA
+    seed.write_text(json.dumps({"wrote_by": "the run before"}))
+
+    got = run("c", anchor=0, seed=FINAL_CAMERA)
+
+    assert got["ok"], got["stages"]
+    assert seed.exists(), "the run deleted the very file it was seeded from"
+    assert FINAL_CAMERA not in got.get("cleared", []), "the seed was cleared"
+    assert (clip_dir / "camera_seed_used.json").exists(), "no snapshot was taken"
+
+
+def test_a_missing_seed_is_named_rather_than_left_to_a_stage(tmp_path, monkeypatch):
+    """The stage's own failure is `FileNotFoundError` on a path, with nothing saying it was the
+    seed or that a previous run removed it."""
+    from camlab.solve.pipeline import FINAL_CAMERA, run
+
+    _fake_run(tmp_path, monkeypatch)
+    got = run("c", anchor=0, seed=FINAL_CAMERA)
+
+    assert not got["ok"]
+    assert "seed" in got["stages"]
+    assert FINAL_CAMERA in got["stages"]["seed"]
+    assert "camera_seed_used.json" in got["stages"]["seed"], "no route back is offered"
