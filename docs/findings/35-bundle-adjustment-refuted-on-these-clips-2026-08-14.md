@@ -79,3 +79,38 @@ re-testing — but that is the case the chain already solves to 1.5–4 px.
 
 Also unused and cheap: `cv2.detail.waveCorrect`, which removes the accumulated roll along a chain.
 It addresses a real symptom the chain has, and it does not need the adjuster to be useful first.
+
+---
+
+# `waveCorrect` too, and for a different reason
+
+Listed above as "worth trying, and it does not need the adjuster to be useful first". Tried, and it
+damages the camera on every clip:
+
+| clip | before | after, best common gauge removed |
+|---|---|---|
+| `fan` | 1.48 px | **31.43** |
+| `g11710897` | 6.52 | **21.67** |
+
+The gauge removal matters, because raw it moves everything 84–168° and scores `nan`, which would
+again be a statement about a convention. It is **not** a pure gauge change: the per-frame correction
+varies by **3.54°** on `fan` and **8.04°** on `g11710897`, so it really does alter the relative
+rotations, and after taking the common part out what is left is worse.
+
+The reason is the opposite of the adjuster's. `waveCorrect` makes a panorama level by assuming the
+cameras' x-axes should be coplanar — it *invents* an up direction, because a panorama has no world
+frame and needs one. **Ours has one**, from the pitch, and the roll in it is measured against the
+paint. So the function is solving a problem this repo does not have, and paying for it by
+overwriting a measurement with an assumption.
+
+## The three OpenCV global methods, together
+
+| | verdict | why |
+|---|---|---|
+| `BundleAdjusterRay` | **worse, 4 seeds, 2 clips** | fits one rotation to points at mixed depths; at 1.5 m the pitch spans 2–100 m in frame |
+| `waveCorrect` | **worse, 2 clips** | invents an up direction over a world frame that is already measured |
+| `focalsFromHomography` | **usable, seconds apart** | exact; needs a few degrees of turn, which neighbours do not have |
+
+One of three. The two that failed both failed by replacing something this repo measures with
+something the stitching pipeline has to assume, which is the shape to watch for in the rest of that
+module.
