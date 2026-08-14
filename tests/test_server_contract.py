@@ -9,7 +9,16 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from camlab.runs import runs_root
 from camlab.server.app import STATIC, app
+
+#: These go through the server at real run data — an ingested clip with frames, a
+#: camera and a manual layer. `runs/` is not committed (it is measurements, not source),
+#: so in a fresh checkout, which is what CI is, there is nothing for them to run against.
+#: They used to FAIL there rather than skip: 4 failed, 135 passed on an empty runs dir.
+#: Skipping is honest; a green CI here does not mean these were exercised.
+needs_fan = pytest.mark.skipif(not (runs_root() / "fan").exists(),
+                              reason="needs the ingested `fan` run; runs/ is not committed")
 
 client = TestClient(app)
 
@@ -130,6 +139,7 @@ def test_the_whole_clip_checkbox_is_wired_to_something():
     )
 
 
+@needs_fan
 def test_a_clip_scoped_edit_moves_every_frame_and_keeps_their_own_aim():
     """Position is shared across a clip; orientation and focal are not.
 
@@ -186,6 +196,9 @@ def test_the_copy_from_frame_control_is_wired_and_cannot_go_clip_wide():
     assert "nFrames" in body, "and it must reject a frame number outside the clip"
 
 
+
+
+@needs_fan
 def test_the_upload_route_rejects_what_is_not_a_video():
     """The upload exists so a clip nobody has tuned anything for can be tried.
 
@@ -228,6 +241,7 @@ def test_a_clip_counts_as_solved_when_it_has_any_camera():
         assert r["solved"] == has, f"{cid}: solved={r['solved']} but cameras present={has}"
 
 
+@needs_fan
 def test_the_flip_turns_every_frame_and_leaves_the_solve_alone():
     """The pitch is exactly symmetric under a half-turn, so this is the one question about the
     camera that no measurement can answer and a person can. It must therefore be one click, apply
@@ -282,6 +296,7 @@ def test_an_uploaded_clip_arrives_with_a_camera_and_a_way_to_solve_it():
     assert r.status_code == 200 and "state" in r.json(), "status must answer before any solve runs"
 
 
+@needs_fan
 def test_the_default_camera_is_labelled_as_a_guess():
     """It is a guess and every consumer has to be able to tell. A default that reads like a solve
     is how an unmeasured number ends up quoted as a result."""

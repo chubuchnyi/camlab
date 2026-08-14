@@ -160,6 +160,29 @@ dynamic and changes when the VM restarts.
 answers, and it sleeps again, so the box reads alive from a shell and dead from a browser.
 `tunnel.sh` holds a `wsl.exe` process open to prevent that.
 
+## CI, and what its green tick is worth
+
+`.github/workflows/ci.yml` runs `ruff` and the suite on every push, and builds the image on every
+push so a broken `Dockerfile` is caught by the commit that broke it. A tag `v*` is what publishes:
+the image goes to `ghcr.io/chubuchnyi/camlab`, and `latest` only ever moves from a tag.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0     # -> ghcr.io/chubuchnyi/camlab:0.1.0 and :latest
+docker run -p 8000:8000 -v "$PWD/runs:/runs" ghcr.io/chubuchnyi/camlab:latest
+```
+
+**A green tick does not mean the pipeline works.** `runs/` is measurements, not source, and is not
+committed, so a fresh checkout has no ingested clip: **34 of 169 tests skip**, and they are the
+ones that go through the server at real frames. What CI proves is that the geometry, the metric,
+the solver contracts and the viewer's routes hold. Whether a camera comes out *right* is the
+rendered overlay and the probe scripts, and neither runs there.
+
+On a non-tag build the image is loaded and actually started, because a built image is not a working
+one: the smoke test asks it to serve, checks `scripts/` reached it — a container once shipped
+without them and the viewer's solve button failed with *"can't open file
+/app/scripts/solve_carry.py"* — and imports `cv2`, without which the viewer serves happily and the
+one endpoint that answers "is this camera right?" returns 500.
+
 ## Two rules it keeps
 
 **No CDN.** three.js is vendored under `src/camlab/server/static/vendor/` with checksums, and a

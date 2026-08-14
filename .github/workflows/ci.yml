@@ -1,0 +1,133 @@
+# Tests on every push, and a release image when a version is tagged.
+#
+# **A green run here does not mean the pipeline works.** `runs/` holds measurements, not source,
+# and is not committed, so a fresh checkout has no ingested clip: 34 of the 169 tests skip, and
+# they are the ones that go through the server at real frames. What CI proves is that the geometry,
+# the metric, the solver contracts and the viewer's routes hold — not that a camera comes out
+# right. That is the rendered overlay and the probe scripts, and neither runs here.
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first. Not for tags: a release build that is
+# half-pushed to the registry is worse than one that finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The floor `pyproject.toml` declares. Testing on the newest Python would let a
+          # 3.12-only construct through into a project that says it runs on 3.11.
+          python-version: "3.11"
+          cache: pip
+
+      # `[cv]` as well as `[dev]`: the paint detector is a cv2 pipeline and it is what every
+      # measurement in this repo is checked against. Without the extra the suite would skip the
+      # half that matters and still go green.
+      - run: pip install -e ".[cv,dev]"
+
+      # ruff is PINNED to 0.16.1 in pyproject's [dev]. Installing it unpinned here is how CI and a
+      # developer's checkout end up enforcing different rule sets and disagreeing about a clean
+      # file — it has happened in the sibling project, over one rule, unnoticed for a week.
+      - run: ruff check .
+
+      - run: pytest -p no:randomly
+        env:
+          # Point at a directory that exists and is empty, so the media-dependent tests take the
+          # skip branch deliberately rather than by accident of the runner's layout.
+          CAMLAB_RUNS: ${{ runner.temp }}/runs
+
+      # Said out loud in the job summary, because "168 passed" in a log that actually ran 135 is
+      # how a green tick starts meaning more than it should.
+      - if: always()
+        run: |
+          echo "### camlab tests" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`runs/\` is not committed, so every test that needs an ingested clip skips here." \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo "A green tick means the geometry, the metric and the routes hold. It does **not**" \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo "mean a camera comes out right — that is the overlay and the probe scripts." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  # Built on every push so a broken Dockerfile is caught with the commit that broke it, and pushed
+  # to the registry only for a tag. A branch build that publishes is how `:latest` comes to mean
+  # "whatever was merged last", which is not a release.
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # `latest` only from a tag, never from a branch.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # The image must be able to run the thing it exists to run. Loading it locally on a
+          # non-tag build is what makes the smoke test below possible at all.
+          load: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+      # A built image is not a working one. This is the check the sibling project's register asks
+      # for by name — "verify what actually serves rather than trusting a green deploy" — after a
+      # container was once shipped without `scripts/`, so the viewer loaded and its solve button
+      # failed with "can't open file /app/scripts/solve_carry.py".
+      - name: The image serves, and carries what the solve button runs
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          IMG=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          docker run -d --name camlab -p 8000:8000 "$IMG"
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8000/ && break
+            sleep 2
+          done
+          curl -sf -o /dev/null http://127.0.0.1:8000/ || { docker logs camlab; exit 1; }
+          docker exec camlab test -f /app/scripts/solve_carry.py
+          docker exec camlab test -f /app/scripts/polish_camera.py
+          # cv2 is the ground truth's only route into the image. Without `[cv]` the viewer serves
+          # happily and the one endpoint that answers "is this camera right?" returns 500.
+          docker exec camlab python -c "import cv2, camlab; print(cv2.__version__)"
+          docker rm -f camlab
