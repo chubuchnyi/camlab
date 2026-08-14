@@ -339,6 +339,13 @@ Ordered by how much they cost.
   It reads as "this clip is slow" and cost a day and four abandoned runs. The mechanism is NOT
   established - the obvious fork-inherited-mutex story did not reproduce on a synthetic probe, so
   `tests/test_parallel_pool.py` pins the measured property and not a diagnosis.
+- **A running uvicorn serves the code it was started with, and says nothing about it.** The one on
+  port 8000 on 2026-08-14 had been up **1 day 2 hours** — older than the sky fix, the anchor fixes,
+  the pool deadlock fix and the ridge scales — so the viewer had been serving yesterday's code all
+  day, and the hung `g15449383` workers were its. Restarting it needs the port checked, not a
+  `kill` on a pid from `$!`: a fresh uvicorn that loses the bind prints `[Errno 98] address already
+  in use` **into its own log and exits**, leaving the stale one answering, which is what happened on
+  the first attempt. `ss -lptn 'sport = :8000'` names the real holder.
 - **`pkill -f <pattern>` kills the shell that is running it.** The pattern appears in that shell's
   own command line, so `pkill -f solve_carry.py` from a script that mentions `solve_carry.py`
   matches itself and everything started after it in the same command dies too. Cost three runs on
