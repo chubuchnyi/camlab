@@ -286,6 +286,13 @@ Ordered by how much they cost.
   through the wrong one found 1 model marking and 0 matches against 8 and 7, and a whole 120-frame
   run came back "0 segments, every frame unsupported" — indistinguishable from a clip with no
   markings in it. `line_errors`' own docstring recommended the property, which is how it happened.
+- **The chain runs at the SEED CAMERA's `cx`/`cy`, not at `ClipInfo.principal_point`.**
+  `solve_carry.py:69` reads `seed["cx"]` and every later stage inherits it. The two disagree on a
+  cropped clip by the whole crop offset — `fan` (540, **304**) against a derived (540, **-334**) —
+  and `fan`'s own file records `principal_point_offset_px: 638.0` next to the 304 it uses. Read the
+  camera, never derive it. `write_start_camera` seeds a fresh ingest from the derived value, so
+  **re-ingesting `fan` would re-solve it at a different axis and change every stored number for that
+  clip**; it is the only cropped clip on disk, which is why nothing has caught this.
 - **A feature can be saturated by its own definition and still separate the classes.** A
   straightness column that selected paint within +-2.5 px and reported the maximum deviation over
   that same band could not exceed 2.5, and scored 0.842. A cut sweep exposed it at once: every
