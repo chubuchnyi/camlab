@@ -1,4 +1,9 @@
-# #14 now has something to be measured against: 3673 markings and 1451 non-markings
+# #14 now has something to be measured against: 3673 markings and 1321 non-markings
+
+> **The totals and separations in the first half of this file are superseded by the
+> correction at the bottom** — 130 of the negatives were arc chords, which are paint.
+> The first half is kept as written because how the numbers were wrong is the useful
+> part: they were committed, and the error was found by looking at a picture.
 
 #14 has been parked twice, both times for the same stated reason — **only 12 negatives existed to
 validate a filter against**, and "a discriminator cannot be evaluated on a clip that has nothing to
