@@ -181,3 +181,89 @@ The carry drifts between anchors: frame 20 comes out at focal 972 and frame 35 a
 2100 at the anchors either side. The markings hold at 7 throughout, so the drift is in the camera
 and not in what can be measured — which is the situation the rest of the chain exists for, and it
 has not run yet.
+
+
+---
+
+# What a run directory says it is, and what it is — 2026-08-14
+
+Asked what I would carry into the working solution. Checking the state of `g11710897` to answer
+honestly turned up two defects underneath the answer, and both had been shaping conclusions for a
+day.
+
+## The chain's declared result was three fixes out of date, on eight of nine clips
+
+`camera_smooth.json` is what `FINAL_CAMERA` resolves to — the file anything downstream opens. On
+`g11710897` it held focal **2777**, the pre-fix seed that scores three markings. The `camera_carry.json`
+beside it, six hours newer, held **2100**: the operator's own anchor, scoring seven.
+
+My own 3000 s timeout had killed that run after the carry stage, and nothing removed the stages
+that no longer had an input. Checked across every run directory afterwards:
+
+| | |
+|---|---|
+| clips holding a downstream output older than its input | **8 of 9** |
+| clips where the stale file was `camera_polished.json`, the chain's declared result | **6** |
+| how far behind | 5.9 – 6.7 hours |
+
+The six polished files were written at 09:0x when polish was measured; the multi-anchor re-solve
+rewrote `camera_smooth.json` under them at 15:1x. So the polish gains recorded in `pipeline.py`
+were true when taken and describe nothing that is on disk now — they are dated in the source as of
+this commit, not deleted, because they will be re-measured rather than guessed at.
+
+`run()` now deletes every output it is about to write before writing any of them. A killed run
+leaves gaps; gaps make readers fail loudly, and a stamp only helps the readers that check it.
+
+## Three of the twelve anchors were the seed written back, and the twelve were not being read
+
+The anchor list came back `[0, 2, 39]` where the run of 13 Aug had used twelve. The store holds
+both, under two keys — and the operator had aimed while the viewer was showing each:
+
+| key | entries | frame 0 holds |
+|---|---|---|
+| `camera_start.json` | 3 | focal 2778 at (0, −75, 20) — **the seed's own frame 0** |
+| `camera_smooth.json` | 12 | focal 2100 at (56, 25, 1.5) — a phone at head height |
+
+**An entry equal to the solve is not an aim,** and the separation is not close:
+
+| | d_rot | d_pos | d_focal | |
+|---|---|---|---|---|
+| frame 0 | 2.47e-05 | 0.0000 | 0.0592 | nothing was moved |
+| frame 2 | 2.01e-01 | 59.50 m | 571.94 | aimed |
+| frame 39 | 2.74e-01 | 55.00 m | 0.0592 | aimed |
+
+Four orders of magnitude between the viewer's write rounding and the smallest real aim, so the
+tolerance is safe from both sides — 1e-4 rad is twenty times finer than the viewer's smallest
+rotation step. Dropping these costs nothing, because `solve_carry` already scores the seed's own
+pose as a candidate at every anchor; what they added was three phantom entries in the anchor list.
+
+## Reading every key: implemented, then refuted
+
+The entries are absolute world poses, so an aim made against one solve is a perfectly good anchor
+for another. I implemented that and it is wrong, for a reason no amount of reasoning would have
+produced:
+
+- **The broadcast test needs the solve the entries overlay, and the next run overwrites that file.**
+  `fan` went to **114 anchors on a 120-frame clip**, from five keys whose reference files have all
+  been rewritten since the edits were made.
+- **A shared position does not mark a broadcast.** All twelve of `g11710897`'s aims sit at exactly
+  (56, 25, 1.5) — the phone does not move, and only the rotation was aimed. This filter looked
+  obvious and would have deleted **exactly the pitch-level case this branch exists for**.
+- **File mtimes cannot date an entry.** `camera_manual.json` is rewritten whole on every edit, so
+  its timestamp is about the newest edit anywhere in it. The test called `g11710897`'s good
+  reference stale and `fan`'s five overwritten ones current — the wrong answer on both.
+
+So old edits cannot be classified after the fact. The read stays narrow; the **silence does not**.
+`unread_aims()` reports what is on disk under other keys and `run()` prints it, because the failure
+that actually happened was not a wrong choice — it was twelve aims sitting on disk while the clip
+was called unsolvable, with nothing connecting the two.
+
+The real repair is at write time: the viewer should record, in the entry, the pose it was aimed
+away from. Then "was anything actually moved" is answerable forever without a file that moves.
+
+## What this leaves
+
+The operator's aims are split across two keys and **no seed reads both** — frames 2 and 39 are real
+aims under `camera_start.json`, and the run now under way is seeded from `camera_smooth.json`, so
+it is using twelve and reporting those two as unread. That is a real cost of the narrow read and
+the reason the write-time stamp is worth doing.
