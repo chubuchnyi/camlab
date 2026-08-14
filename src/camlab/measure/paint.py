@@ -21,11 +21,42 @@ from dataclasses import dataclass
 
 import numpy as np
 
+
 #: Paint is a bright ridge with turf on BOTH sides, and that is what separates it from everything
 #: else white in a stadium: an advertising board is flat inside and has board, not turf, beside its
 #: edge; a player's shorts have shirt or skin beside them. The scales bracket the painted width
 #: from the far touchline (~2 px) to the goal area (~14 px).
-RIDGE_SCALES = (2, 4, 7)
+#:
+#: **That bracket is a broadcast camera's, and a phone at the touchline breaks it.** Measured on
+#: `g11710897` frame 39, where the near touchline is **34-54 px** wide against a largest scale of 7:
+#:
+#:     (2, 4, 7)            7 segments, **0** of them on that line
+#:     (2, 4, 7, 14, 28)   10 segments, **5** on it
+#:
+#: The solve then aligns to what it can see, which on that frame is the advertising hoarding: all
+#: seven segments sit in the 43-50 % band at the top of the playing surface, and the widest, most
+#: obvious line in the picture contributes nothing.
+#:
+#: This branch recorded the opposite two days earlier -- "the ridge scales do not need widening,
+#: refuted" -- measured on frames 0 and 1, where the same line is far away and narrow. Both
+#: readings are right about their own frame, which is the point: the usable scale depends on how
+#: far the paint is, and on a pitch-level clip that varies enormously WITHIN one frame.
+#:
+#: Overridable while that is settled: auto (this default) -> `CAMLAB_RIDGE_SCALES` -> per call.
+def _ridge_scales() -> tuple[int, ...]:
+    import os
+
+    raw = os.environ.get("CAMLAB_RIDGE_SCALES")
+    if not raw:
+        return (2, 4, 7)
+    try:
+        got = tuple(int(x) for x in raw.replace(",", " ").split() if x)
+    except ValueError:
+        return (2, 4, 7)
+    return got or (2, 4, 7)
+
+
+RIDGE_SCALES = _ridge_scales()
 RIDGE_CONTRAST = 16
 RIDGE_MIN_V = 95
 

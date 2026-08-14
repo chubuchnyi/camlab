@@ -21,7 +21,7 @@ projected pitch lands on the painted one, judged by eye as well as by the number
 | `fan` (1080×608, phone, stands, floodlit night) | **1.82 px** | 1.65 px | 15.54 px | 6 | 2 % | 120/120 |
 | `broadcast` (1920×1080, professional) | **2.96 px** | 2.75 px | 12.14 px | 7 | 1 % | 60/60 |
 | `CRO_MOR_194948` (1920×1080, one hand anchor) | **4.22 px** | 4.04 px | 13.87 px | 9 | — | 120/120 |
-| `g11710897` (1080×1920, phone at the touchline) | 26.15 px | 18.45 px | 35.66 px | 7 | — | 4/8 · carry only |
+| `g11710897` (1080×1920, phone at the touchline) | 4.34 px | 3.09 px | 13.41 px | 6 | — | 38/40 · **and the camera is WRONG** |
 | `g15449383` (1920×1080) | 4.47 px | 3.49 px | 72.60 px | **2** | **21 %** | not a verdict |
 
 **Read the markings column first.** Every error here is a max over the markings a frame scores, so
@@ -32,6 +32,12 @@ on a frame holding two it is a max over two. `g15449383` was called solved on "4
 `fan` for that reason alone, because a nearest-paint distance charges a hole in the detected
 centreline to the camera, and a line cannot be displaced along itself. Full measurement:
 `findings/worst-spot-is-the-detector-not-the-camera-2026-08-12.md`.
+
+**Read `g11710897`'s row as a warning, not a result.** The full chain completes on it in 158 s and
+reports 4.34 px, and projecting the model shows its touchline lying on the **advertising boards**
+while the broad white line filling the foreground has nothing on it. The metric is satisfied by the
+wrong correspondence — every marking it scores is close to some paint, belonging to a different
+line. `findings/25-the-chain-runs-now-and-the-camera-is-still-wrong-2026-08-14.md`.
 
 `CRO_MOR_194948` is the first clip solved from an operator's own anchor in the viewer, and it took
 three fixes landing the same day to work at all: the solver did not read hand edits, the anchor
