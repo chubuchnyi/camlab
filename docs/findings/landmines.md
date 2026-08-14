@@ -280,6 +280,19 @@ Ordered by how much they cost.
   `pipeline.py` were taken at 09:0x against a `camera_smooth.json` the multi-anchor re-solve
   replaced at 15:1x. They were true when taken and describe nothing that is on disk now.
 
+- **The camera's optical axis is not the clip's, on a cropped clip.** `ClipInfo.principal_point`
+  answers "where is the axis in the SOURCE frame"; a solved camera records the axis it was fitted
+  with. `fan` solved at (540, 304) where the property derives (540, **-334**). Scoring one frame
+  through the wrong one found 1 model marking and 0 matches against 8 and 7, and a whole 120-frame
+  run came back "0 segments, every frame unsupported" — indistinguishable from a clip with no
+  markings in it. `line_errors`' own docstring recommended the property, which is how it happened.
+- **A feature can be saturated by its own definition and still separate the classes.** A
+  straightness column that selected paint within +-2.5 px and reported the maximum deviation over
+  that same band could not exceed 2.5, and scored 0.842. A cut sweep exposed it at once: every
+  threshold from 2.5 up keeps 100 % of both classes. Sweep the cut before believing a separation.
+- **`CRO_MOR_194948` and `wp_194948` are the same file** — one `source_sha256`, byte-identical
+  results. Anything that walks `runs/` and says "measured across N clips" counts it twice.
+
 ## Geometry and conventions
 
 - **Image-direction grouping is order-dependent.** Families spread 11° in the image against an 8°

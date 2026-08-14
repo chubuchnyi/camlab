@@ -210,9 +210,16 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
                 max_offset_px: float = MAX_OFFSET_PX) -> list[LineError]:
     """Every straight marking the camera puts in frame, against the segments actually detected.
 
-    `cx, cy` default to the image centre **only** if not given. Pass `ClipInfo.principal_point`:
-    on a cropped clip the optical axis is not the centre of the frames on disk, and this clip's is
-    638 px away from it.
+    `cx, cy` default to the image centre **only** if not given, and the image centre is wrong on a
+    cropped clip: the optical axis is not the centre of the frames on disk.
+
+    **Given a camera file, pass ITS `cx`/`cy`.** This used to say "pass `ClipInfo.principal_point`",
+    which is right only when fitting a camera from scratch. Once a camera exists it records the axis
+    it was fitted with, and that is the one its numbers mean. They differ, and not by a little:
+    `fan` solved at (540, 304) where `ClipInfo.principal_point` derives (540, -334), because the
+    clip is a crop and that property answers "where is the axis in the SOURCE frame". Scoring one
+    `fan` frame through the clip's value found **1 model marking and 0 matches**, against 8 and 7
+    through the camera's own — a silent, total loss that reads as "this frame has no markings".
     """
     cx = width / 2.0 if cx is None else cx
     cy = height / 2.0 if cy is None else cy
