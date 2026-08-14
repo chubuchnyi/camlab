@@ -134,32 +134,20 @@ before. `fan` gaps 4 % → 2 %.
 
 *Precision now has a validation set* (2026-08-14,
 `findings/14-has-a-validation-set-now-2026-08-14.md`). `scripts/harvest_negatives.py` labels every
-detected segment by projecting the model through the clip's own camera: over six distinct clips and
-569 frames, **3673 markings and 1321 non-markings** — after removing 684 second pieces of a
-straight marking and **130 chords lying on an arc**, both of which are paint. The arc contamination
-was found by rendering the labels and looking, hours after the first totals were committed, and it
-is 2.4 % of `fan`'s negatives against **35 % of `g14604660`'s**. The older count in this file — 315 and 12 over
-seven clips — was counting something narrower, so neither number refutes the other; what is gone is
-the stated blocker, "nothing to validate a filter against".
+detected segment against the clip's own camera: **3673 markings and 1321 non-markings** over six
+clips, where the stated blocker had been twelve. **Length separates on every clip** (0.713–0.975)
+and #17 was right — it measured on `fan`, the weakest of the six. `MIN_MERGED_PX = 100` still
+filters nothing; ≥ 150 px keeps 92.4 % of markings and 40.0 % of the rest.
 
-**Length is the discriminator, on every clip** — separation 0.713 to 0.975 — and #17 was right. It
-measured on `fan`, which turns out to be the **weakest** of the six. `MIN_MERGED_PX = 100` still
-filters nothing at all; ≥ 150 px keeps 92.4 % of markings and 40.0 % of the rest.
+**Nothing is shipped from it.** Class separation is not the test — #17's re-solve sweep is, and it
+has not been run. Three things in that doc are worth reading before touching this: the single-clip
+answer was the *opposite* one, 130 of the negatives turned out to be arc chords and were found by
+looking at a picture rather than a table, and the largest source of false lines on a broadcast frame
+is the **goal net**, whose segments are long and which a length cut therefore does not reach.
 
-But the largest single source of false lines on a broadcast frame is **the goal net**, and those
-segments are long, so a length cut does not reach them. Seen on the labelled render of `fan` 55.
-
-The single-clip answer was the opposite one: on `fan` alone `on_paint` beat length 0.839 to 0.720,
-and across six clips it is 0.702 against 0.854. That write-up was one step from being made.
-
-**Nothing is shipped from this.** Class separation is not the test; #17's standard is, and by it the
-re-solve sweep at 150 / 200 / 250 px has not been run. `MIN_MERGED_PX` stays at 100 until it has.
-
-Two candidates measured earlier are in `findings/11-is-blocked-by-14-2026-08-12.md`: turf support
-at a wide scale (clean on `fan` frame 8, does not survive twelve samples) and "does paint continue
-past the segment's ends", whose sign turned out to be the **opposite** of the guess — straight
-markings 0 %, arc pieces 58 %, because `merge_collinear` already extends a straight marking over its
-whole painted run.
+Two earlier candidates are in `findings/11-is-blocked-by-14-2026-08-12.md`: turf support at a wide
+scale, and "does paint continue past the segment's ends", whose sign was the **opposite** of the
+guess because `merge_collinear` already extends a straight marking over its whole painted run.
 
 *The older reading, kept because the mechanism is real* —
 `findings/11-is-blocked-by-14-2026-08-12.md`. On `fan` frame 8 two of nine detected segments are
