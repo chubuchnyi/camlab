@@ -1,4 +1,8 @@
-# #25: the chain runs end to end now, and the camera it produces is still wrong
+# #25: the chain runs end to end now, and needs wider ridge scales
+
+> **Section 4 of this file is wrong and is kept with its correction at the end.** It claimed the
+> camera was mis-solved; that was a bug in my overlay, caught by the operator's eye within minutes
+> of my publishing it. The title has been changed to stop the claim spreading.
 
 Two separate results, and conflating them would be the mistake.
 
@@ -87,3 +91,35 @@ Two things follow:
 - **#14's precision half is the blocker for #25**, which is worth stating because #14 was parked
   twice for want of data. The advertising hoarding is a non-marking that survives every filter
   measured so far, and here it is not a nuisance — it is what the solve is aligned to.
+
+
+---
+
+# Correction: section 4 was my rendering, not the camera
+
+The operator looked at the overlay and said the yellow lay correctly, bar one piece. He was right
+and section 4 above is withdrawn.
+
+My overlay skipped any marking with an endpoint behind the camera:
+
+    if np.any(q[:, 2] <= 1e-9): continue
+
+A phone at 1.5 m standing beside the line has the near markings running *past* it — on frame 39 two
+of them straddle the camera plane, one endpoint 54 m in front and the other **6.5 m behind**. Both
+were dropped, and they are exactly the long lines crossing the foreground. So the broad white line
+had no yellow on it because I did not draw it.
+
+Clipping the segment at the camera plane before projecting puts them back: 7 markings drawn becomes
+8, and the eighth runs the length of the foreground alongside the painted line, converging with it
+at the right edge.
+
+**What is actually true of this camera.** It is close and not exact: `across` 13.0 px on frame 39
+against a 4.34 px median over the clip, and the visible error is an offset on the near line of well
+under its own painted width (34–54 px). That is a camera to improve, not a camera that found the
+wrong correspondence.
+
+**What this cost.** Section 4 was committed, put in `STATUS.md`, and used to re-rank #14 above #25.
+None of it was measured — it was one look at one picture I had drawn wrong, and I stated it as a
+finding. The rule this repo already has ("the operator's eye is ground truth on a visual question")
+exists for the case where my check and his disagree; here my check was the only one, and it was the
+broken one.
