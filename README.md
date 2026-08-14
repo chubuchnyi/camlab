@@ -16,11 +16,18 @@ only the way in.
 |---|---|---|---|---|---|
 | `fan` — 1080×608, a phone from the stands, floodlit night | **1.82 px** | 1.65 px | 15.54 px | 6 | 120/120 |
 | `broadcast` — 1920×1080, professional | **2.96 px** | 2.75 px | 12.14 px | 7 | 60/60 |
+| `CRO_MOR_194948` — 1920×1080, from one operator anchor | **4.22 px** | 4.04 px | 13.87 px | 9 | 120/120 |
+| `g11710897` — 1080×1920, **a phone at the touchline** | **4.34 px** | 3.09 px | 13.41 px | 6 | 38/40 |
 
-A third clip is ingested and **not** solved, which is worth stating because it briefly looked
-solved: `g15449383` scores 2.92 px on **two markings** a frame against `fan`'s six. Every error
-here is a max over the markings a frame holds, so on two of them it is a max over two.
-`Residual.supported` now refuses that as a verdict.
+`g11710897` is the shape most of the real work has: a phone held at head height beside an amateur
+pitch. It needs `CAMLAB_RIDGE_SCALES=2,4,7,14,28`, because its near touchline is **34–54 px** wide
+against a shipped largest ridge scale of 7, and with the default the detector finds none of that
+line at all — 9.16 px against 4.34.
+
+One clip is ingested and **not** solved, which is worth stating because it briefly looked solved:
+`g15449383` scores 2.92 px on **two markings** a frame against `fan`'s six. Every error here is a
+max over the markings a frame holds, so on two of them it is a max over two. `Residual.supported`
+now refuses that as a verdict.
 
 **Three numbers, and they measure different things.** `across` is the distance from a marking to
 its paint along the marking's own normal — the camera, alone. `worst line` is the same median
@@ -64,13 +71,23 @@ python -m camlab ingest myclip --video /path/to/clip.mp4 --frames 60
 # field of view. Nothing in it is measured; the file says is_default: true.
 .venv/bin/python scripts/start_camera.py myclip
 
-# align ONE frame by eye in the viewer, then:
-.venv/bin/python scripts/solve_carry.py        myclip --anchor 12 --seed camera_start.json \
+# what can be said about the camera WITHOUT solving anything — a hint to narrow a search with
+.venv/bin/python scripts/bootstrap_hint.py myclip
+
+# align frames by eye in the viewer — as many as you like, each is worth about sixty frames of
+# carry — then run the five stages. `--anchor` takes a comma list; the viewer, given an empty
+# anchor field, finds every frame you aimed by itself.
+.venv/bin/python scripts/solve_carry.py        myclip --anchor 0,12,30 --seed camera_start.json \
                                                       --free-position --out camera_carry.json
 .venv/bin/python scripts/solve_selfheal.py     myclip --from camera_carry.json  --out camera_healed.json
 .venv/bin/python scripts/solve_shared_centre.py myclip --from camera_healed.json --out camera_fixed.json
 .venv/bin/python scripts/smooth_camera.py      myclip --from camera_fixed.json  --out camera_smooth.json
+.venv/bin/python scripts/polish_camera.py      myclip --from camera_smooth.json --out camera_polished.json
 ```
+
+`camera_polished.json` is the chain's answer. The viewer opens it, and the name is read off
+`solve.pipeline.STAGES` rather than written anywhere, so adding a stage cannot leave a reader
+looking at the one before.
 
 Judging a camera:
 
@@ -174,7 +191,8 @@ src/camlab/
   core/      pure numpy: pitch model, camera types, plane->camera recovery, projection
   measure/   the paint in the frame, and how far a camera is from it — the ground truth
              lines, line_error, residual, ellipse (the arcs), stripes (the turf), pixel_motion
-  solve/     carry, refit (Nelder-Mead and Levenberg-Marquardt), bootstrap, per_frame, pipeline
+  solve/     carry, refit (Nelder-Mead and Levenberg-Marquardt), bootstrap, hand (the operator's
+             own anchors), vanishing, per_frame, pipeline
   io/        video in, frames and clip.json out; reading an upstream scene
   server/    FastAPI + a vendored three.js viewer, no CDN, no build step
 scripts/     every stage as a CLI, and the benches the findings cite
