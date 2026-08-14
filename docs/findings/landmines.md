@@ -265,6 +265,20 @@ Ordered by how much they cost.
   gives 5.5, 8.8, 14.7 px on the next three and is back to ~50 px by the fifth. Judging a seeding
   strategy on its median over twenty frames hides that entirely — it reads 50.4 → 49.1, "no
   effect", when the first three frames are ten times better.
+- **A run directory does not know which run wrote it, so a killed chain leaves the PREVIOUS run's
+  later stages standing.** They are ordinary camera files with ordinary names and nothing says they
+  are stale. On `g11710897` the carry stage ran at 21:50 and reached focal 2100, the operator's own
+  anchor; `camera_smooth.json` — the name `FINAL_CAMERA` resolves to, the file anything downstream
+  opens — was still the 15:37 file at focal **2777**, the pre-fix seed that scores three markings
+  where the anchor scores seven. The directory read as a completed chain.
+  Checked across every run afterwards: **eight of nine clips were in this state**, and on six of
+  them the stale file was `camera_polished.json`, the chain's declared result, sitting six hours
+  behind the `camera_smooth.json` it was supposedly built from. `pipeline.run` now deletes every
+  output it is about to write before it writes any of them, so a killed run leaves gaps and never
+  a lie; `tests/test_hand_anchors.py` fails if it stops.
+- **Re-measure a stage's published numbers when the stage under it is re-run.** The polish gains in
+  `pipeline.py` were taken at 09:0x against a `camera_smooth.json` the multi-anchor re-solve
+  replaced at 15:1x. They were true when taken and describe nothing that is on disk now.
 
 ## Geometry and conventions
 

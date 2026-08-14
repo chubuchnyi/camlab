@@ -215,3 +215,76 @@ def test_the_hand_key_survives_the_seed_snapshot():
     assert "hand_key = requested_seed" in src, (
         "the snapshot branch does not preserve the name the edits are keyed to"
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Stale stage outputs. A killed run leaves the PREVIOUS run's later stages on disk.
+# ---------------------------------------------------------------------------------------------
+
+STUB = '''import json, os, sys
+from pathlib import Path
+a = sys.argv[1:]
+out = a[a.index("--out") + 1]
+root = Path(os.environ["CAMLAB_RUNS"])
+(root / a[0] / out).write_text(json.dumps({"wrote_by": Path(sys.argv[0]).name}))
+print("wrote " + out)
+'''
+
+CLIP = {"clip_id": "c", "source": "x.mp4", "source_sha256": "0", "width": 100, "height": 100,
+        "fps": 25.0, "n_frames": 3, "first_frame": 0, "crop": None,
+        "source_width": 100, "source_height": 100}
+
+
+def _fake_run(tmp_path, monkeypatch, *, fail_at=None):
+    """A run directory and a scripts directory of stubs, wired the way `run` expects them."""
+    from camlab.solve import pipeline
+
+    root = tmp_path / "runs"
+    (root / "c").mkdir(parents=True)
+    (root / "c" / "clip.json").write_text(json.dumps(CLIP))
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for _label, script, _extra in pipeline.STAGES:
+        body = 'import sys; sys.exit(1)' if script == fail_at else STUB
+        (scripts / script).write_text(body)
+    monkeypatch.setenv("CAMLAB_RUNS", str(root))
+    monkeypatch.setattr(pipeline, "SCRIPTS", scripts)
+    monkeypatch.setattr(pipeline, "REPO", tmp_path)
+    return root / "c"
+
+
+def test_a_previous_runs_outputs_do_not_survive_into_this_one(tmp_path, monkeypatch):
+    """`g11710897`, exactly. A run carried at 21:50 to the operator's anchor and was then killed;
+    `camera_smooth.json` — the file FINAL_CAMERA names — was still the 15:37 file from the run
+    before, at a focal 32 % out that scores three markings instead of seven. The directory read as a
+    completed chain, and every conclusion drawn from it was about a camera three fixes out of date.
+    """
+    from camlab.solve.pipeline import FINAL_CAMERA, run
+
+    clip_dir = _fake_run(tmp_path, monkeypatch)
+    stale = clip_dir / FINAL_CAMERA
+    stale.write_text(json.dumps({"focal_px": [2777.0] * 3, "wrote_by": "a run three fixes ago"}))
+
+    got = run("c", anchor=0)
+
+    assert got["ok"], got["stages"]
+    assert json.loads(stale.read_text())["wrote_by"] != "a run three fixes ago"
+    assert FINAL_CAMERA in got.get("cleared", []), "the removal was not reported to the caller"
+
+
+def test_a_chain_that_dies_early_leaves_no_later_stage_behind(tmp_path, monkeypatch):
+    """The failure that actually happened: the chain stops after `carry` and the previous run's
+    `camera_smooth.json` is still sitting there. Absent is honest; stale is not, because every
+    reader downstream takes FINAL_CAMERA on trust."""
+    from camlab.solve.pipeline import FINAL_CAMERA, run
+
+    clip_dir = _fake_run(tmp_path, monkeypatch, fail_at="solve_selfheal.py")
+    (clip_dir / FINAL_CAMERA).write_text(json.dumps({"wrote_by": "the run before"}))
+
+    got = run("c", anchor=0)
+
+    assert not got["ok"], "the stub was supposed to fail at self-heal"
+    assert (clip_dir / "camera_carry.json").exists(), "the stage that DID run must keep its output"
+    assert not (clip_dir / FINAL_CAMERA).exists(), (
+        "a stale final camera outlived the run that was supposed to replace it"
+    )

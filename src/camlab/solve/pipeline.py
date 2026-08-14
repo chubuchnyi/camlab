@@ -83,7 +83,11 @@ STAGES = [
     # again, so a frame that was fine when self-heal saw it can be the worst in the clip by the end.
     # An operator scrubbing `g14604660` found exactly that and fixed frames by hand.
     #
-    # Measured, worst frame in the clip, before -> after:
+    # Measured 2026-08-13 09:0x, worst frame in the clip, before -> after. **Against a
+    # `camera_smooth.json` that no longer exists**: the multi-anchor re-solve rewrote smooth on
+    # every one of these clips six hours later, and because nothing invalidated the stage after
+    # it, each `camera_polished.json` on disk stayed built from the older input. The gains below
+    # were real when taken and have not been re-measured since.
     #     broadcast        7.03 -> 4.33     14 of 60 frames changed
     #     14604731        28.73 -> 22.74    10 of 180
     #     CRO_MOR_194948   6.80 -> 5.56      2 of 120
@@ -174,6 +178,36 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
                 f"seeded from a copy of {src.name} kept as {SEED_SNAPSHOT}, because the chain "
                 f"overwrites {src.name} itself"
             )
+
+    # Clear every output this chain is about to write, BEFORE writing any of it.
+    #
+    # The failure path above only covers a stage that fails while this function is watching. A run
+    # that is killed outright — a timeout on the caller's side, the harness, an operator closing the
+    # tab — leaves the previous run's later outputs sitting next to this run's earlier ones, and
+    # nothing on disk says which run each came from.
+    #
+    # That is not hypothetical. `g11710897` carried at 21:50 to focal 2100, the operator's own
+    # anchor; `camera_smooth.json` — the file FINAL_CAMERA names, the one anything downstream reads
+    # — was still the 15:37 file at focal 2777, the pre-fix seed that scores three markings instead
+    # of seven. The run directory read as a completed chain and every conclusion drawn from it was
+    # about a camera three fixes out of date.
+    #
+    # Deleting rather than stamping, because a missing file makes every reader fail loudly and a
+    # stamp only helps the readers that check it.
+    from camlab.runs import ClipInfo
+
+    run_dir = ClipInfo.load(clip_id).dir
+    stale = []
+    for name in sorted(OUTPUTS):
+        path = run_dir / name
+        if path.exists():
+            path.unlink()
+            stale.append(name)
+    if stale:
+        out["cleared"] = stale
+        out["stages"]["clear"] = (
+            f"removed {len(stale)} output(s) from a previous run: {', '.join(stale)}"
+        )
 
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
