@@ -101,6 +101,43 @@ def _nearest_marking_px(seg: np.ndarray, model_uv: list[np.ndarray]) -> float:
     return best
 
 
+def _nearest_arc_px(seg: np.ndarray, arc_uv: np.ndarray) -> float:
+    """Distance from a segment's midpoint to the nearest projected ARC point.
+
+    Found by looking at the labelled render rather than at the numbers, which is the whole argument
+    for looking. On `g14604660` frame 5 two segments sit exactly on the penalty D and are labelled
+    junk, because `line_errors` only knows `straight_markings()` and an arc has no straight
+    counterpart. They are paint, and a filter trained with them in the negative class learns to
+    throw arcs away — on a pitch whose arcs are 9-25 % of every clip's line set.
+    """
+    if not len(arc_uv):
+        return float("inf")
+    mid = np.array([(seg[0] + seg[2]) / 2.0, (seg[1] + seg[3]) / 2.0])
+    return float(np.min(np.linalg.norm(arc_uv - mid, axis=1)))
+
+
+def _projected_arcs(cam, idx, info, cx, cy) -> np.ndarray:
+    """Every curved marking's sample points, projected and kept where they land in the image."""
+    from camlab.measure.ellipse import arc_markings
+    from camlab.measure.residual import world_to_image
+
+    h = world_to_image(float(cam["focal_px"][idx]), cam["rotation"][idx], cam["position"][idx],
+                       info.width, info.height, cx=cx, cy=cy)
+    out = []
+    for world in arc_markings():
+        q = np.column_stack([world, np.ones(len(world))]) @ h.T
+        ok = np.abs(q[:, 2]) > 1e-9
+        if not ok.any():
+            continue
+        uv = q[ok, :2] / q[ok, 2, None]
+        uv = uv[np.isfinite(uv).all(axis=1)]
+        inside = ((uv[:, 0] >= -50) & (uv[:, 0] < info.width + 50)
+                  & (uv[:, 1] >= -50) & (uv[:, 1] < info.height + 50))
+        if inside.any():
+            out.append(uv[inside])
+    return np.vstack(out) if out else np.zeros((0, 2))
+
+
 def _projected_markings(cam, idx, info, cx, cy) -> list[np.ndarray]:
     """Every straight model marking that reaches the image, clipped to it."""
     from camlab.measure.residual import world_to_image
@@ -157,6 +194,7 @@ def harvest(clip_id: str, camera_name: str) -> dict:
             continue
         used.append(frame)
         model_uv = _projected_markings(cam, idx, info, cx, cy)
+        arc_uv = _projected_arcs(cam, idx, info, cx, cy)
 
         matched = {tuple(np.round(np.asarray(e.found_uv, float).ravel(), 4))
                    for e in errs if e.found_uv is not None}
@@ -172,6 +210,7 @@ def harvest(clip_id: str, camera_name: str) -> dict:
                 "row_frac": float(v[0] / info.height),
                 "angle_deg": float(np.degrees(np.arctan2(s[3] - s[1], s[2] - s[0])) % 180.0),
                 "nearest_marking_px": _nearest_marking_px(np.asarray(s, float), model_uv),
+                "nearest_arc_px": _nearest_arc_px(np.asarray(s, float), arc_uv),
             })
 
     return {"clip": clip_id, "camera": camera_name, "rows": rows,
@@ -188,8 +227,17 @@ def harvest(clip_id: str, camera_name: str) -> dict:
 #: would teach a filter to reject real paint.
 ARTEFACT_GAP_PX = 5.0
 
+#: And a segment this close to a projected ARC is paint too. `line_errors` only knows the straight
+#: markings, so every chord detected along the centre circle or a penalty D lands in the negative
+#: class looking like junk. The share is wildly clip-dependent - 2.4 % of `fan`'s negatives, 3.6 %
+#: of `broadcast`'s, and **35 % of `g14604660`'s** - so a filter validated without this cut learns,
+#: on exactly the clips that matter, to throw away arcs. Same 5 px as above, for the same reason:
+#: it is the width either class is resolved to.
+ARC_GAP_PX = 5.0
 
-def report(paths: list[Path], gap_px: float = ARTEFACT_GAP_PX) -> None:
+
+def report(paths: list[Path], gap_px: float = ARTEFACT_GAP_PX,
+           arc_px: float = ARC_GAP_PX) -> None:
     rows: list[dict] = []
     for p in paths:
         blob = json.loads(p.read_text())
@@ -203,10 +251,13 @@ def report(paths: list[Path], gap_px: float = ARTEFACT_GAP_PX) -> None:
 
     yes = [r for r in rows if r["is_marking"]]
     raw_no = [r for r in rows if not r["is_marking"]]
-    no = [r for r in raw_no if r.get("nearest_marking_px", float("inf")) > gap_px]
-    dropped = len(raw_no) - len(no)
-    print(f"\n{len(yes)} markings, {len(no)} non-markings "
-          f"({dropped} dropped as second pieces of a marking, within {gap_px:.0f} px of one)")
+    near_line = [r for r in raw_no if r.get("nearest_marking_px", float("inf")) <= gap_px]
+    rest = [r for r in raw_no if r.get("nearest_marking_px", float("inf")) > gap_px]
+    on_arc = [r for r in rest if r.get("nearest_arc_px", float("inf")) <= arc_px]
+    no = [r for r in rest if r.get("nearest_arc_px", float("inf")) > arc_px]
+    print(f"\n{len(yes)} markings, {len(no)} non-markings")
+    print(f"  dropped from the negative class: {len(near_line)} second pieces of a straight "
+          f"marking, {len(on_arc)} chords lying on an arc - both are paint")
     if len(no) < 30:
         print("!! too few negatives to conclude anything - the register has been caught three "
               "times reading a reversal off single-digit counts")
@@ -237,10 +288,12 @@ def main() -> None:
     ap.add_argument("--report", nargs="*", type=Path)
     ap.add_argument("--gap-px", type=float, default=ARTEFACT_GAP_PX,
                     help="a negative closer than this to a marking is a labelling artefact")
+    ap.add_argument("--arc-px", type=float, default=ARC_GAP_PX,
+                    help="a negative closer than this to a projected arc is a chord of it")
     args = ap.parse_args()
 
     if args.report is not None:
-        report(args.report, args.gap_px)
+        report(args.report, args.gap_px, args.arc_px)
         return
     if not args.clip:
         ap.error("give a clip, or --report with the files to summarise")

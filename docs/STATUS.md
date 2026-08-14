@@ -135,16 +135,22 @@ before. `fan` gaps 4 % → 2 %.
 *Precision now has a validation set* (2026-08-14,
 `findings/14-has-a-validation-set-now-2026-08-14.md`). `scripts/harvest_negatives.py` labels every
 detected segment by projecting the model through the clip's own camera: over six distinct clips and
-569 frames, **3673 markings and 1451 non-markings**. The older count in this file — 315 and 12 over
+569 frames, **3673 markings and 1321 non-markings** — after removing 684 second pieces of a
+straight marking and **130 chords lying on an arc**, both of which are paint. The arc contamination
+was found by rendering the labels and looking, hours after the first totals were committed, and it
+is 2.4 % of `fan`'s negatives against **35 % of `g14604660`'s**. The older count in this file — 315 and 12 over
 seven clips — was counting something narrower, so neither number refutes the other; what is gone is
 the stated blocker, "nothing to validate a filter against".
 
-**Length is the discriminator, on every clip** — separation 0.720 to 0.976 — and #17 was right. It
+**Length is the discriminator, on every clip** — separation 0.713 to 0.975 — and #17 was right. It
 measured on `fan`, which turns out to be the **weakest** of the six. `MIN_MERGED_PX = 100` still
-filters nothing at all; ≥ 150 px keeps 92.4 % of markings and 37.9 % of the rest.
+filters nothing at all; ≥ 150 px keeps 92.4 % of markings and 40.0 % of the rest.
+
+But the largest single source of false lines on a broadcast frame is **the goal net**, and those
+segments are long, so a length cut does not reach them. Seen on the labelled render of `fan` 55.
 
 The single-clip answer was the opposite one: on `fan` alone `on_paint` beat length 0.839 to 0.720,
-and across six clips it is 0.668 against 0.863. That write-up was one step from being made.
+and across six clips it is 0.702 against 0.854. That write-up was one step from being made.
 
 **Nothing is shipped from this.** Class separation is not the test; #17's standard is, and by it the
 re-solve sweep at 150 / 200 / 250 px has not been run. `MIN_MERGED_PX` stays at 100 until it has.

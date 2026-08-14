@@ -95,3 +95,63 @@ is, and it is the right one — raising the cut from 60 to 100 there bought nine
 20 px while the median did not move, which is what told it the removed segments were carrying no
 fit. The equivalent sweep at 150 / 200 / 250 px, re-solving each clip and judging by the paint, is
 the next step and has not been run. Until it has, `MIN_MERGED_PX` stays at 100.
+
+---
+
+# Correction, same day: 130 of those "non-markings" were arc chords
+
+Written a few hours after the above, and found by **rendering the labels and looking at them**, not
+by any number in the tables. On `g14604660` frame 5 two segments lie exactly along the penalty D and
+are coloured as junk.
+
+They are paint. `line_errors` matches against `straight_markings()` only, so a chord detected along
+the centre circle or a penalty arc has no counterpart to match and falls into the negative class
+looking like a mowing stripe. A filter validated on that set learns to throw arcs away — and this
+project's own register puts arc chords at 9–25 % of every clip's line set.
+
+The share is wildly clip-dependent, which is why an average would have hidden it:
+
+| clip | negatives | of those, lying on an arc |
+|---|---|---|
+| `fan` | 328 | 8 — **2.4 %** |
+| `broadcast` | 112 | 4 — 3.6 % |
+| `g14604660` | 60 | 21 — **35.0 %** |
+
+The clip where it matters most is the pitch-level one, where a third of the negative class was real
+paint. Corrected totals, with chords excluded alongside the second-piece artefacts:
+
+| | before the correction | after |
+|---|---|---|
+| markings | 3673 | 3673 |
+| non-markings | 1451 | **1321** |
+| length separation | 0.863 | **0.854** |
+| `on_paint` separation | 0.668 | 0.702 |
+
+| length cut | markings kept | non-markings kept |
+|---|---|---|
+| ≥ 150 px | 92.4 % | 40.0 % |
+| ≥ 200 px | 79.5 % | 28.8 % |
+| ≥ 250 px | 68.5 % | 18.2 % |
+
+| clip | markings / others | separation |
+|---|---|---|
+| `broadcast` | 335 / 108 | 0.975 |
+| `NET_ARG_225042` | 250 / 165 | 0.974 |
+| `CRO_MOR_194948` | 984 / 115 | 0.937 |
+| `g14604660` | 159 / 39 | 0.871 |
+| `14604731` | 1189 / 574 | 0.814 |
+| `fan` | 756 / 320 | **0.713** |
+
+**The conclusion survives and the numbers did not.** Length is still the discriminator on every
+clip and `fan` is still the weakest, so nothing above needs re-deciding — but 9 % of the negative
+class was real paint, and it was found by looking at a picture after the tables had been written up
+and committed.
+
+## What the same picture showed that the tables could not
+
+On `fan` frame 55 the negative class is dominated by **the goal net** — a dense bundle of long,
+straight, bright lines standing on the playing surface. `detect_segments`' own docstring names it,
+and the labelling puts it exactly where it belongs. It is also the case a **length cut does not
+reach**: those segments are long. So "length separates" is true in aggregate and says nothing about
+the single largest source of false lines on a broadcast frame, which is worth knowing before
+raising `MIN_MERGED_PX` and expecting the net to go away.
