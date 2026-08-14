@@ -1,6 +1,13 @@
 # What is true right now
 
-Last measured 2026-08-12. Read this and `findings/landmines.md`; that is the cold start.
+Last measured 2026-08-14. Read this and `findings/landmines.md`; that is the cold start.
+
+**A run directory is only as current as its last complete run.** Until 2026-08-14 a killed chain
+left the previous run's later stages standing, and eight of nine clips were in that state — six of
+them with `camera_polished.json`, the chain's declared result, six hours behind the
+`camera_smooth.json` it claims to be built from. `pipeline.run` now clears what it is about to
+write. Numbers quoted from a run directory that predate this are suspect;
+`findings/pitch-level-clips-2026-08-13.md` has the measurement.
 
 ---
 
@@ -125,13 +132,28 @@ returned as **1823**. Zhang-Suen returns 846, the mask's own count. `g11710897` 
 a frame to 5**, and two is below `refit.MIN_MATCHED`, so that clip could not be fitted at all
 before. `fan` gaps 4 % → 2 %.
 
-*Precision is parked for want of data, not ideas* (2026-08-13). Over seven clips the detected
-lines are **315 markings and 12 non-markings** — there is nothing to validate a filter against. Two
-more candidates were measured and are in `findings/11-is-blocked-by-14-2026-08-12.md`: turf support
+*Precision now has a validation set* (2026-08-14,
+`findings/14-has-a-validation-set-now-2026-08-14.md`). `scripts/harvest_negatives.py` labels every
+detected segment by projecting the model through the clip's own camera: over six distinct clips and
+569 frames, **3673 markings and 1451 non-markings**. The older count in this file — 315 and 12 over
+seven clips — was counting something narrower, so neither number refutes the other; what is gone is
+the stated blocker, "nothing to validate a filter against".
+
+**Length is the discriminator, on every clip** — separation 0.720 to 0.976 — and #17 was right. It
+measured on `fan`, which turns out to be the **weakest** of the six. `MIN_MERGED_PX = 100` still
+filters nothing at all; ≥ 150 px keeps 92.4 % of markings and 37.9 % of the rest.
+
+The single-clip answer was the opposite one: on `fan` alone `on_paint` beat length 0.839 to 0.720,
+and across six clips it is 0.668 against 0.863. That write-up was one step from being made.
+
+**Nothing is shipped from this.** Class separation is not the test; #17's standard is, and by it the
+re-solve sweep at 150 / 200 / 250 px has not been run. `MIN_MERGED_PX` stays at 100 until it has.
+
+Two candidates measured earlier are in `findings/11-is-blocked-by-14-2026-08-12.md`: turf support
 at a wide scale (clean on `fan` frame 8, does not survive twelve samples) and "does paint continue
 past the segment's ends", whose sign turned out to be the **opposite** of the guess — straight
 markings 0 %, arc pieces 58 %, because `merge_collinear` already extends a straight marking over its
-whole painted run. Resume when the pitch-level clips have cameras good enough to label against.
+whole painted run.
 
 *The older reading, kept because the mechanism is real* —
 `findings/11-is-blocked-by-14-2026-08-12.md`. On `fan` frame 8 two of nine detected segments are
