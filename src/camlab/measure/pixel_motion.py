@@ -300,3 +300,61 @@ def rotation_only_residual_px(pair: PairMotion, cx: float, cy: float, width: int
                    method="Nelder-Mead",
                    options={"xatol": 1e-5, "fatol": 1e-6, "maxiter": 800})
     return float(res.fun), float(np.exp(res.x[0])), float(np.exp(res.x[1]))
+
+
+def focals_from_homography(h: np.ndarray, cx: float, cy: float
+                           ) -> tuple[float | None, float | None]:
+    """`(focal of frame i, focal of frame j)` in pixels, from the map between them alone.
+
+    Closed form, from Shum and Szeliski, *Construction of Panoramic Image Mosaics with Global and
+    Local Alignment*. It holds under the same assumption the carry stage already makes and has
+    already measured — a camera turning about a fixed centre — so it costs nothing beyond a
+    homography this repo computes anyway, and it answers a question nothing else here answers
+    independently: **what is the focal, without the pitch model?**
+
+    Every other focal in camlab comes from fitting markings. This one comes from the pixels, so
+    when the two agree the agreement means something, and when they disagree it localises the
+    problem to one side or the other.
+
+    `cv2.detail.focalsFromHomography` is the same maths and is **unusable from Python**: its C++
+    signature writes `f0`, `f1`, `f0_ok`, `f1_ok` through references, which the binding cannot do
+    for immutable Python numbers, so on OpenCV 5.0 it returns `None` whatever is passed.
+
+    **`cx`, `cy` are not optional and are the whole trap.** The derivation assumes the optical axis
+    is at the origin, and a homography measured between raw frames is in pixel coordinates with the
+    origin in the corner. Passing one straight in gives a confident, wrong number rather than a
+    failure. So the map is conjugated into axis-centred coordinates first, `T H T⁻¹` with `T` the
+    shift by `(-cx, -cy)` — and those must be the CAMERA's `cx`/`cy`, not the image centre, which on
+    a cropped clip are 638 px apart (`findings/the-principal-point-a-clip-runs-at-2026-08-14.md`).
+
+    `None` where the form is degenerate, which is not rare and is not a bug: the denominators
+    vanish for a pure translation and for a pan with no tilt, and a camera that has barely moved
+    between two frames is close to both. A caller wanting one number per clip should take the
+    median over the pairs that answered, and count the ones that did not.
+    """
+    t = np.array([[1.0, 0.0, -cx], [0.0, 1.0, -cy], [0.0, 0.0, 1.0]])
+    hc = t @ np.asarray(h, dtype=float) @ np.linalg.inv(t)
+    p = hc.ravel()
+
+    def solve(d1: float, d2: float, v1: float, v2: float) -> float | None:
+        if abs(d1) < 1e-12 and abs(d2) < 1e-12:
+            return None
+        a = v1 / d1 if abs(d1) > 1e-12 else None
+        b = v2 / d2 if abs(d2) > 1e-12 else None
+        # Two candidate f², from the two independent constraints. Prefer the one whose denominator
+        # is larger, because the other is the one going singular.
+        if a is not None and b is not None:
+            f2 = a if abs(d1) > abs(d2) else b
+            if f2 <= 0:
+                f2 = b if f2 is a else a
+        else:
+            f2 = a if a is not None else b
+        return float(np.sqrt(f2)) if f2 is not None and f2 > 0 else None
+
+    f1 = solve(p[6] * p[7], (p[7] - p[6]) * (p[7] + p[6]),
+               -(p[0] * p[1] + p[3] * p[4]),
+               p[0] * p[0] + p[3] * p[3] - p[1] * p[1] - p[4] * p[4])
+    f0 = solve(p[0] * p[3] + p[1] * p[4],
+               p[0] * p[0] + p[1] * p[1] - p[3] * p[3] - p[4] * p[4],
+               -p[2] * p[5], p[5] * p[5] - p[2] * p[2])
+    return f0, f1
