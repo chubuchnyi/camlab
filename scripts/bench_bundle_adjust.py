@@ -38,12 +38,26 @@ from camlab.runs import ClipInfo  # noqa: E402
 GAPS = (1, 5, 20, 60)
 
 
-def _features(info, frames, max_features: int = 2000):
+def _features(info, frames, max_features: int = 2000, surface_only: bool = False):
+    """SIFT per frame, optionally only where the pitch is.
+
+    `surface_only` is the whole question this probe exists to settle. A ray bundle adjustment
+    explains its points with one rotation, and that is only possible for points on ONE plane at a
+    fixed depth. Fed a whole frame it gets the hedge, the stands, the boards, the crowd and the
+    players — mixed depths, and moving — so it fits a rotation to something no rotation explains.
+    `paint_masks` already returns the playing surface; this restricts the keypoints to it.
+    """
+    from camlab.measure.residual import frame_evidence_cached
+
     sift = cv2.SIFT_create(nfeatures=max_features)
     out = []
     for idx, f in enumerate(frames):
         img = cv2.imread(str(info.frame_path(f)), cv2.IMREAD_GRAYSCALE)
-        kp, desc = sift.detectAndCompute(img, None)
+        mask = None
+        if surface_only:
+            surface = frame_evidence_cached(info.frame_path(f))[1]
+            mask = (surface > 0).astype(np.uint8) * 255
+        kp, desc = sift.detectAndCompute(img, mask)
         fe = cv2.detail.ImageFeatures()
         fe.img_idx = idx
         fe.img_size = (info.width, info.height)
@@ -130,15 +144,18 @@ def main() -> None:
     ap.add_argument("--camera", default="camera_smooth.json")
     ap.add_argument("--step", type=int, default=1, help="use every Nth frame")
     ap.add_argument("--limit", type=int, default=40, help="at most this many frames")
+    ap.add_argument("--surface-only", action="store_true",
+                    help="keypoints on the playing surface only — one plane, one depth")
     args = ap.parse_args()
 
     info = ClipInfo.load(args.clip)
     cam = read_camera(info.dir / args.camera)
     frames = list(range(0, info.n_frames, args.step))[:args.limit]
-    print(f"== {args.clip}: {len(frames)} frames, seeded from {args.camera}")
+    where = "playing surface only" if args.surface_only else "the whole frame"
+    print(f"== {args.clip}: {len(frames)} frames, seeded from {args.camera}, features on {where}")
 
     t0 = time.time()
-    feats = _features(info, frames)
+    feats = _features(info, frames, surface_only=args.surface_only)
     matches, made = _match(feats, frames)
     print(f"   {made} pairs matched over gaps {GAPS} in {time.time() - t0:.0f}s")
     if made < len(frames):

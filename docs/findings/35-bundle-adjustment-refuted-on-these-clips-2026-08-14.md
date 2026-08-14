@@ -57,10 +57,25 @@ adjuster minimises its own objective correctly and the objective is the wrong on
 Not worth trying: tuning it. The refinement mask, the term criteria and the confidence threshold do
 not change what it is fitted to.
 
-Worth trying: **restrict the features to the playing surface.** `paint_masks` already returns that
-mask, and points on the pitch plane are the ones a homography can actually explain. That turns the
-input from "everything in frame" into "the plane the model lives on", which is the difference
-between the two objectives above. It is a small change to the probe script and is not done here.
+Tried: **restrict the features to the playing surface.** `--surface-only` masks SIFT to what
+`paint_masks` calls the pitch. It does not rescue it, and on the clip that matters it is worse:
+
+| clip | whole frame | surface only |
+|---|---|---|
+| `fan` | 1.54 → 18.35 | 1.54 → **18.54** |
+| `g11710897` | 7.29 → 21.52 | 6.52 → **33.88**, focal collapsing 1940 → **1020** |
+
+Which locates the real objection, and it is not about which features. **For a camera at 1.5 m the
+pitch is not a plane at a fixed depth** — it runs from two metres to a hundred within one frame. A
+rotation-only homography needs either a scene at effectively constant depth or a camera that does
+not translate, and a phone held beside the touchline gives neither. Masking to the surface makes it
+worse precisely because it throws away the far features, which are the ones closest to satisfying
+the assumption, and keeps near grass texture spanning the widest depth range in the picture.
+
+So this is refuted for the shape of clip this branch exists for, and it is refuted for a reason that
+will not go away with better inputs. On a broadcast camera 20 m up, where the whole pitch sits at
+60–100 m and the camera is on a fixed mount, the assumption is far closer to true and this is worth
+re-testing — but that is the case the chain already solves to 1.5–4 px.
 
 Also unused and cheap: `cv2.detail.waveCorrect`, which removes the accumulated roll along a chain.
 It addresses a real symptom the chain has, and it does not need the adjuster to be useful first.
