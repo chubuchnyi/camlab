@@ -499,14 +499,22 @@ _SOLVES: dict[str, dict] = {}
 
 
 @app.post("/api/run/{clip_id}/solve")
-def solve(clip_id: str, anchor: int = 0, seed: str = "camera_start.json") -> dict:
+def solve(clip_id: str, anchor: str = "", seed: str = "camera_start.json",
+          ridge_scales: str = "") -> dict:
     """Run the whole chain in the background: carry, self-heal, shared centre, smooth.
 
     Not synchronous. Sixty frames takes a few minutes and an HTTP request that long is a request
     that dies to some proxy or laptop lid. Poll `GET .../solve` for progress.
 
-    `anchor` should be a frame the human has aligned by eye, if there is one: measured at about
-    sixty frames' worth of anchor, and the difference between 2.11 px and 7.75 px on the fan clip.
+    **`anchor` empty means every frame the operator has aimed**, which is what `anchors_for` finds.
+    It used to be `int = 0`, so this route forced a single anchor on every press and quietly undid
+    the multi-anchor fix — eleven of `g11710897`'s twelve aims discarded, from the one path an
+    operator actually uses. A number or a comma list still overrides, for a caller that means one
+    particular frame.
+
+    `ridge_scales` reaches `paint_masks` through the stage environment. Without it the button could
+    only ever run one detector setting, and on a pitch-level clip that is the difference between
+    9.16 px and 4.34 px — the reason the honest advice was "do not press this button here".
     """
     import threading
 
@@ -517,8 +525,20 @@ def solve(clip_id: str, anchor: int = 0, seed: str = "camera_start.json") -> dic
     if cur and cur.get("state") == "running":
         raise HTTPException(409, f"{clip_id} is already solving: {cur.get('stage')}")
 
-    st: dict = {"state": "running", "stage": "starting", "step": 0, "of": 4,
-                "anchor": anchor, "seed": seed, "stages": {}}
+    picks: int | list[int] | None = None
+    if str(anchor).strip():
+        try:
+            picks = sorted({int(x) for x in str(anchor).replace(",", " ").split()})
+        except ValueError:
+            raise HTTPException(
+                422, f"anchor must be empty, a number or a comma list: {anchor!r}") from None
+    from camlab.solve.pipeline import STAGES as PIPELINE_STAGES
+    from camlab.solve.pipeline import anchors_for
+
+    shown = picks if picks is not None else anchors_for(clip_id, seed)
+    st: dict = {"state": "running", "stage": "starting", "step": 0, "of": len(PIPELINE_STAGES),
+                "anchor": shown, "auto_anchor": picks is None,
+                "seed": seed, "ridge_scales": ridge_scales, "stages": {}}
     _SOLVES[clip_id] = st
 
     def progress(i, n, label, what):
@@ -526,14 +546,16 @@ def solve(clip_id: str, anchor: int = 0, seed: str = "camera_start.json") -> dic
 
     def work():
         try:
-            res = run_pipeline(clip_id, anchor=anchor, seed=seed, on_progress=progress)
+            res = run_pipeline(clip_id, anchor=picks, seed=seed, on_progress=progress,
+                               env_extra={"CAMLAB_RIDGE_SCALES": ridge_scales})
             st.update(state="done" if res["ok"] else "failed", stages=res["stages"],
                       camera=res.get("camera"))
         except Exception as exc:                              # noqa: BLE001 - surface, never hide
             st.update(state="failed", stage=f"crashed: {exc}")
 
     threading.Thread(target=work, daemon=True).start()
-    return {"started": True, "clip_id": clip_id, "anchor": anchor, "seed": seed}
+    return {"started": True, "clip_id": clip_id, "anchor": shown,
+            "auto_anchor": picks is None, "seed": seed, "ridge_scales": ridge_scales}
 
 
 @app.get("/api/run/{clip_id}/solve")

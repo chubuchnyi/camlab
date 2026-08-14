@@ -206,11 +206,27 @@
          Anchor on a frame you have aligned by eye if you have one — measured at about sixty
          frames' worth, and the difference between 2.11 px and 7.75 px on the fan clip. -->
     <div id="slvtools">
-      <label class="row">anchor frame
-        <input class="ed" id="s-anchor" type="number" min="0" step="1" value="0" />
+      <!-- EMPTY means every frame you have aimed. This field used to be a number defaulting to 0,
+           so the button forced one anchor on every press and silently undid the multi-anchor
+           chain: eleven of g11710897's twelve aims discarded, from the one path an operator
+           actually uses. Type a number or a comma list to override. -->
+      <label class="row">anchor frames
+        <input class="ed" id="s-anchor" type="text" placeholder="auto — every frame you aimed" />
+      </label>
+      <div class="small muted" id="s-anchornote">&mdash;</div>
+      <!-- The paint detector's ridge widths, in pixels. The shipped (2,4,7) brackets a broadcast
+           lens; a phone at the touchline sees a 34-54 px line and (2,4,7) finds NONE of it, which
+           is worth 9.16 px against 4.34 px on g11710897. Exposed because otherwise the honest
+           advice is "do not press this button on that clip". -->
+      <label class="row">line widths
+        <select class="ed" id="s-ridge">
+          <option value="">auto — 2,4,7 (broadcast)</option>
+          <option value="2,4,7,14,28">wide — 2,4,7,14,28 (camera at pitch level)</option>
+          <option value="2,3,4,5,7,10,14,20,28">every width (slow, more junk)</option>
+        </select>
       </label>
       <button id="s-go">solve this clip</button>
-      <div class="small muted" id="s-note">carry &rarr; self-heal &rarr; shared centre &rarr; smooth</div>
+      <div class="small muted" id="s-note">carry &rarr; self-heal &rarr; shared centre &rarr; smooth &rarr; polish</div>
     </div>
 <h2>Solve</h2>
     <div class="small muted" id="solveinfo">—</div>
@@ -224,8 +240,6 @@
     <label><input type="checkbox" id="L-camera"     checked /> camera + frustum</label>
     <label><input type="checkbox" id="L-trajectory" checked /> trajectory</label>
     <label><input type="checkbox" id="L-frameplane" checked /> frame plane</label>
-    <label class="off"><input type="checkbox" disabled /> players <span class="soon">M4</span></label>
-    <label class="off"><input type="checkbox" disabled /> ball <span class="soon">M4</span></label>
 <h2>Frame plane</h2>
     <label><input type="checkbox" id="planeauto" checked /> auto: where the axis meets the pitch</label>
     <label class="row">distance
@@ -750,10 +764,22 @@ $("s-go").onclick = async () => {
   setBusy(true, "solving · starting", 0);
   $("s-note").textContent = "starting…";
   try {
-    const r = await fetch(`/api/run/${id}/solve?anchor=${+$("s-anchor").value}` +
-                          `&seed=${camWhich()}`, { method: "POST" });
+    // `+value` was the defect: an empty field became 0, and 0 is a VALID anchor, so "I did not
+    // choose" and "anchor on frame zero" were the same request. Sent as text; the server reads
+    // empty as "every frame the operator aimed".
+    const q = new URLSearchParams({ anchor: $("s-anchor").value.trim(),
+                                    seed: camWhich(),
+                                    ridge_scales: $("s-ridge").value });
+    const r = await fetch(`/api/run/${id}/solve?${q}`, { method: "POST" });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || r.status);
+    // Say which anchors it actually used, because "auto" that silently found one is the failure
+    // this field exists to make visible.
+    const many = (d.anchor || []).length;
+    $("s-anchornote").textContent =
+      (d.auto_anchor ? "auto: " : "you chose: ") +
+      (many ? `${many} anchor${many === 1 ? "" : "s"} — ${(d.anchor || []).join(", ")}`
+            : "none found, falling back to frame 0");
     if (solvePoll) clearInterval(solvePoll);
     solvePoll = setInterval(() => pollSolve(id), 2000);
   } catch (e) {
@@ -767,7 +793,7 @@ $("s-go").onclick = async () => {
 // does not own is a way to start a second job on top of the first — uploading while a solve runs
 // would have both writing camera files for the same clip.
 const LOCKABLE = ["clip", "camsel", "u-go", "u-file", "u-name", "u-frames", "u-first",
-                  "s-go", "s-anchor", "e-flip", "e-reset", "e-resetall", "e-copy", "e-copyfrom",
+                  "s-go", "s-anchor", "s-ridge", "e-flip", "e-reset", "e-resetall", "e-copy", "e-copyfrom",
                   "e-clip", "e-drag", "e-mode", "e-refine", "play", "scrub",
                   "e-x", "e-y", "e-z", "e-yaw", "e-elev", "e-roll", "e-focal"];
 let busyDepth = 0;

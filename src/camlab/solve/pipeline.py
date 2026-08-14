@@ -149,8 +149,13 @@ def unread_aims(clip_id: str, seed: str) -> dict[str, list[str]]:
 
 
 def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "camera_start.json",
-        on_progress=None, timeout_s: int = 3600) -> dict:
+        on_progress=None, timeout_s: int = 3600, env_extra: dict | None = None) -> dict:
     """Run every stage. Returns `{stage: last line of its output}` plus `ok` and `camera`.
+
+    `env_extra` reaches every stage's environment. The stages are subprocesses and several of the
+    knobs that matter — `CAMLAB_RIDGE_SCALES`, `CAMLAB_WORKERS` — are read there, so without this
+    the viewer could start a solve but never say HOW. That is the gap behind "do not press solve on
+    this clip, it will use the wrong scales and get worse".
 
     A stage that fails stops the chain and is reported — a half-solved clip whose later stages ran
     on a broken earlier one is worse than a clear failure, because it produces a camera file that
@@ -245,6 +250,11 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
             f"removed {len(stale)} output(s) from a previous run: {', '.join(stale)}"
         )
 
+    env = None
+    if env_extra:
+        env = {**os.environ, **{k: str(v) for k, v in env_extra.items() if v not in (None, "")}}
+        out["env"] = {k: v for k, v in env_extra.items() if v not in (None, "")}
+
     for i, (label, script, extra) in enumerate(STAGES):
         args = [sys.executable, str(SCRIPTS / script), clip_id]
         if script == "solve_carry.py":
@@ -255,7 +265,7 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
             on_progress(i, len(STAGES), label, "running")
         try:
             p = subprocess.run(args, cwd=REPO, capture_output=True, text=True,
-                               timeout=timeout_s, check=False)
+                               timeout=timeout_s, check=False, env=env)
         except subprocess.TimeoutExpired:
             out["stages"][label] = f"timed out after {timeout_s}s"
             if on_progress:

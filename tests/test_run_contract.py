@@ -9,6 +9,8 @@ the viewer refuses a solve that disagrees with it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -152,3 +154,46 @@ def test_a_route_asked_for_no_camera_picks_one_rather_than_404ing():
     r = client.get("/api/run/g11710897/residual/0")
     assert r.status_code == 200, r.json()
     assert "camera_auto.json" not in str(r.json()), r.json()
+
+
+# ---------------------------------------------------------------------------------------------
+# Solver parameters from the browser.
+# ---------------------------------------------------------------------------------------------
+
+def test_an_empty_anchor_means_every_aimed_frame_not_frame_zero():
+    """The route was `anchor: int = 0`, and the page sent `+$("s-anchor").value`, so an empty field
+    became 0 — a VALID anchor. "I did not choose" and "anchor on frame 0" were the same request,
+    which forced a single anchor on every press and undid the multi-anchor chain from the one path
+    an operator uses: eleven of g11710897's twelve aims discarded."""
+    import inspect
+
+    from camlab.server import app as srv
+
+    src = inspect.getsource(srv.solve)
+    assert "anchor: str" in src, "back to an int, where empty and frame 0 collide"
+    assert "anchors_for" in src, "nothing looks up the frames the operator aimed"
+
+
+def test_the_detector_setting_reaches_the_stages():
+    """The stages are subprocesses and `CAMLAB_RIDGE_SCALES` is read inside them, so without an
+    env hand-off the button can start a solve but never say how. On `g11710897` that setting is
+    9.16 px against 4.34 px, which is why the honest advice was "do not press this button"."""
+    import inspect
+
+    from camlab.server import app as srv
+    from camlab.solve import pipeline
+
+    assert "env_extra" in inspect.signature(pipeline.run).parameters
+    assert "env=env" in inspect.getsource(pipeline.run), "the environment is built and not passed"
+    assert "CAMLAB_RIDGE_SCALES" in inspect.getsource(srv.solve)
+
+
+def test_the_view_tab_has_no_unimplemented_stubs():
+    """`players` and `ball` were disabled checkboxes badged M4. camlab solves a camera; what stands
+    on the pitch is pitch3d's problem, and a permanently dead control in a panel of live ones
+    teaches an operator to distrust the panel."""
+    page = (Path(__file__).resolve().parent.parent
+            / "src/camlab/server/static/index.html").read_text()
+    assert "M4" not in page, "an unimplemented milestone badge is back in the UI"
+    assert 'disabled /> players' not in page
+    assert 'disabled /> ball' not in page
