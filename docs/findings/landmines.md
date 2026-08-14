@@ -331,6 +331,14 @@ Ordered by how much they cost.
 
 ## Environment
 
+- **`pkill -f <pattern>` kills the shell that is running it.** The pattern appears in that shell's
+  own command line, so `pkill -f solve_carry.py` from a script that mentions `solve_carry.py`
+  matches itself and everything started after it in the same command dies too. Cost three runs on
+  2026-08-14, each looking like the environment reaping background jobs (exit 144) rather than
+  self-inflicted. Use `pkill -f '[s]olve_carry'`, or match on a pid from a prior `pgrep`.
+- **A background command piped to `tail` shows nothing until it exits.** `cmd | tail -20` buffers
+  the whole stream, so a long stage under it is indistinguishable from a hung one even with
+  `python -u`. Redirect to a file and read the file.
 - **`docker exec` without `-i` reads no stdin.**
 - **The image built without the `[cv]` extra** served the viewer happily and returned 500 from the
   residual route only.
