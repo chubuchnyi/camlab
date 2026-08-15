@@ -29,6 +29,10 @@ from camlab.solve.pipeline import FINAL_CAMERA, anchors_for, run  # noqa: E402
 SHIPPED = "2,4,7"
 WIDE = "2,4,7,14,28"
 
+#: `--derived` compares the shipped constant against the ladder each clip's own paint asks for
+#: (`paint.scales_for_clip`), which is the point of #38: neither constant serves everything.
+DERIVED = "derived"
+
 #: Where a clip's chain starts. `camera_start.json` is the labelled default guess and is what a
 #: clip has before anyone touches it; a clip without one has never been given a starting point and
 #: there is nothing to re-solve.
@@ -50,6 +54,12 @@ def verdict(clip_id: str) -> dict:
 
 
 def one(clip_id: str, scales: str, timeout_s: int) -> dict:
+    if scales == DERIVED:
+        from camlab.measure.paint import scales_for_clip
+
+        info = ClipInfo.load(clip_id)
+        scales = ",".join(str(x) for x in
+                          scales_for_clip(info.frame_path(f) for f in range(info.n_frames)))
     r = run(clip_id, seed=SEED, timeout_s=timeout_s,
             env_extra={"CAMLAB_RIDGE_SCALES": scales})
     out = {"scales": scales, "ok": bool(r["ok"]), "seconds": r.get("seconds_total")}
@@ -62,6 +72,8 @@ def main() -> None:
     ap.add_argument("--json", type=Path, default=Path("out/ridge-ab.json"))
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--clips", nargs="*")
+    ap.add_argument("--derived", action="store_true",
+                    help="compare the shipped constant against the per-clip ladder")
     args = ap.parse_args()
 
     clips = args.clips or sorted(
@@ -77,7 +89,8 @@ def main() -> None:
             continue
         print(f"\n=== {c}  (anchors {anchors}) ===", flush=True)
         row = {"clip": c, "anchors": anchors}
-        for tag, scales in (("shipped", SHIPPED), ("wide", WIDE)):
+        rhs = DERIVED if args.derived else WIDE
+        for tag, scales in (("shipped", SHIPPED), ("wide", rhs)):
             try:
                 got = one(c, scales, args.timeout)
             except Exception as exc:                              # noqa: BLE001
@@ -85,9 +98,11 @@ def main() -> None:
             row[tag] = got
             print(f"  {tag:8} {scales:14} {got.get('line', '')[:110]}", flush=True)
         rows.append(row)
-
-    args.json.parent.mkdir(parents=True, exist_ok=True)
-    args.json.write_text(json.dumps(rows, indent=1))
+        # Written after EVERY clip, not at the end. This run takes an hour and the first attempt
+        # was killed at 55 minutes with nothing on disk — an hour of solving thrown away because
+        # the results were held in a list.
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(json.dumps(rows, indent=1))
 
     def cell(a: dict, b: dict, key: str, fmt: str = "{:.2f}") -> str:
         def one_(v):

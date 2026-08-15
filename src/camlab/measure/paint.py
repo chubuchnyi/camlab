@@ -57,6 +57,40 @@ def _ridge_scales() -> tuple[int, ...]:
 
 
 RIDGE_SCALES = _ridge_scales()
+
+#: A scale in `ridge_map` is the offset at which "is there turf on both sides" is asked, so a scale
+#: `s` answers for a line about `2s` wide. The shipped `(2, 4, 7)` therefore brackets paint up to
+#: ~14 px, which is a broadcast lens, and two clips are measured past it.
+#:
+#: **Measured, and it is a narrow separation.** The painted width can be read from a frame with no
+#: camera and no scale — threshold each pixel against its own neighbourhood, keep what is inside
+#: the playing surface and is not turf, and the distance transform of that gives half the width at
+#: every point. Across five frames a clip, the 90th percentile:
+#:
+#:     g11710897        10.0     wide scales HELP  (markings 4 -> 6)
+#:     MOR_POR_181952    8.8     wide scales help
+#:     demo_14604680     7.2     wide scales WRECK it (1.42 -> 15.51 px)
+#:     14604731          6.0     wide scales hurt   (14.00 -> 24.67)
+#:
+#: The ordering is right and the margin is 7.2 against 8.8, on two clips a side. That is not enough
+#: to set a constant by, which is why this returns a LADDER derived from the number rather than a
+#: yes/no on a threshold, and why it is checked by re-solving every clip rather than by argument.
+def scales_for_width(p99_px: float, *, ratio: float = 1.8, cap: int = 24) -> tuple[int, ...]:
+    """The ridge scales that bracket paint whose 99th-percentile width is `p99_px`.
+
+    Always starts at the shipped `(2, 4, 7)` — the far paint is narrow on every clip measured, and
+    dropping the small scales to chase the wide ones is how a clip loses its distant markings.
+    Extends geometrically only as far as the frame's own paint goes, so a clip whose widest line is
+    14 px never gets a scale of 28 looking for something that is not there.
+    """
+    out = [2, 4, 7]
+    want = max(2.0, p99_px / 2.0)
+    while out[-1] < want and out[-1] < cap:
+        nxt = int(round(out[-1] * ratio))
+        if nxt <= out[-1] or nxt > cap:
+            break
+        out.append(nxt)
+    return tuple(out)
 RIDGE_CONTRAST = 16
 RIDGE_MIN_V = 95
 
@@ -507,3 +541,48 @@ def frame_evidence(frame_path, frame: int = 0) -> FrameEvidence | None:
         return None
     h, w = bgr.shape[:2]
     return FrameEvidence(frame, cKDTree(spine), spine, surface, w, h)
+
+
+def painted_width_px(bgr: np.ndarray) -> float | None:
+    """The 99th percentile of the painted line width in this frame, or `None` if no pitch is in it.
+
+    **No camera and no ridge scale enter this**, which is what makes it usable to CHOOSE the ridge
+    scales: threshold every pixel against its own neighbourhood, keep what lies inside the playing
+    surface and is not turf, and the distance transform of what is left gives half the local width
+    at every point.
+
+    The 99th and not the median or the 90th: on a camera near the pitch the wide lines are the near
+    ones and they are a small share of the painted pixels, so they live in the tail. Measured, the
+    90th tops out at 10 px on every clip here — under what the shipped scales already cover —
+    including the two whose near paint is 34-54 px.
+    """
+    import cv2
+
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    turf = _turf(hsv)
+    surface = _surface(turf)
+    if not surface.any():
+        return None
+    hit = cv2.adaptiveThreshold(hsv[..., 2], 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                cv2.THRESH_BINARY, ADAPTIVE_BLOCK, -ADAPTIVE_C)
+    cand = ((hit > 0) & (surface > 0) & (~turf)).astype(np.uint8)
+    if int(cand.sum()) < 200:
+        return None
+    return float(np.percentile(2.0 * cv2.distanceTransform(cand, cv2.DIST_L2, 5)[cand > 0], 99))
+
+
+def scales_for_clip(frames, sample: int = 5) -> tuple[int, ...]:
+    """The ridge scales this clip's own paint asks for. `frames` is an iterable of image paths."""
+    import cv2
+
+    got = []
+    paths = list(frames)
+    step = max(1, len(paths) // sample)
+    for path in paths[::step][:sample]:
+        bgr = cv2.imread(str(path))
+        if bgr is None:
+            continue
+        w = painted_width_px(bgr)
+        if w is not None:
+            got.append(w)
+    return scales_for_width(float(np.median(got))) if got else _ridge_scales()

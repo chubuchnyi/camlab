@@ -351,6 +351,10 @@ Ordered by how much they cost.
   matches itself and everything started after it in the same command dies too. Cost three runs on
   2026-08-14, each looking like the environment reaping background jobs (exit 144) rather than
   self-inflicted. Use `pkill -f '[s]olve_carry'`, or match on a pid from a prior `pgrep`.
+- **A long job must write its results as it goes, not at the end.** The ridge-scale A/B holds each
+  clip's verdict in a list and wrote the JSON after the last one; it was killed at ~55 minutes and
+  an hour of solving went with it. Anything that takes longer than a coffee writes after every
+  item.
 - **A background command piped to `tail` shows nothing until it exits.** `cmd | tail -20` buffers
   the whole stream, so a long stage under it is indistinguishable from a hung one even with
   `python -u`. Redirect to a file and read the file.
