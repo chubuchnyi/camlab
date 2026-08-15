@@ -29,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -250,6 +251,12 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
             f"removed {len(stale)} output(s) from a previous run: {', '.join(stale)}"
         )
 
+    # Per stage and in total. A chain that takes 158 s and one that takes 3000 s look the same in
+    # a progress bar, and the difference between them was a deadlock nobody could see for two days.
+    seconds: dict[str, float] = {}
+    started = time.monotonic()
+    out["seconds"] = seconds
+
     env = None
     if env_extra:
         env = {**os.environ, **{k: str(v) for k, v in env_extra.items() if v not in (None, "")}}
@@ -263,23 +270,29 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
         args += extra
         if on_progress:
             on_progress(i, len(STAGES), label, "running")
+        t_stage = time.monotonic()
         try:
             p = subprocess.run(args, cwd=REPO, capture_output=True, text=True,
                                timeout=timeout_s, check=False, env=env)
         except subprocess.TimeoutExpired:
+            seconds[label] = round(time.monotonic() - t_stage, 1)
+            out["seconds_total"] = round(time.monotonic() - started, 1)
             out["stages"][label] = f"timed out after {timeout_s}s"
             if on_progress:
                 on_progress(i, len(STAGES), label, "timed out")
             return out
+        seconds[label] = round(time.monotonic() - t_stage, 1)
         tail = [ln for ln in (p.stdout or "").splitlines() if ln.strip()]
         out["stages"][label] = tail[-1] if tail else (p.stderr or "").strip()[-300:]
         if p.returncode != 0:
+            out["seconds_total"] = round(time.monotonic() - started, 1)
             out["stages"][label] = f"failed: {(p.stderr or '').strip()[-300:]}"
             if on_progress:
                 on_progress(i, len(STAGES), label, "failed")
             return out
         if on_progress:
             on_progress(i + 1, len(STAGES), label, "done")
+    out["seconds_total"] = round(time.monotonic() - started, 1)
     out["ok"] = True
     # The polish stage's output, when it ran. Named from STAGES rather than written out, so adding
     # or reordering a stage cannot leave this pointing at a file two stages back.

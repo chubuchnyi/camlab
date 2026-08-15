@@ -18,6 +18,7 @@ Run:
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -541,7 +542,22 @@ def solve(clip_id: str, anchor: str = "", seed: str = "camera_start.json",
                 "seed": seed, "ridge_scales": ridge_scales, "stages": {}}
     _SOLVES[clip_id] = st
 
+    # Timed here as well as inside the chain, because the browser needs it WHILE it runs and the
+    # chain only reports when it returns. `stage_started` is what makes the running line say how
+    # long the current stage has been going, which is the number that says "this is not moving".
+    # The two clocks live in the STATE, not in a closure, and the elapsed is worked out when the
+    # browser reads it — see `solve_status`. Stamping it here instead was the obvious version and
+    # it is wrong: `progress` fires twice per stage, so a stage that has been running for 300 s
+    # reports the 0.0 s it had when it started, which is precisely the case the number exists for.
+    st["_t0"] = time.monotonic()
+    st["_stage_t0"] = time.monotonic()
+
     def progress(i, n, label, what):
+        now = time.monotonic()
+        if what == "running":
+            st["_stage_t0"] = now
+        else:
+            st.setdefault("seconds", {})[label] = round(now - st["_stage_t0"], 1)
         st.update(step=i, of=n, stage=f"{label} — {what}")
 
     def work():
@@ -549,7 +565,9 @@ def solve(clip_id: str, anchor: str = "", seed: str = "camera_start.json",
             res = run_pipeline(clip_id, anchor=picks, seed=seed, on_progress=progress,
                                env_extra={"CAMLAB_RIDGE_SCALES": ridge_scales})
             st.update(state="done" if res["ok"] else "failed", stages=res["stages"],
-                      camera=res.get("camera"))
+                      camera=res.get("camera"),
+                      seconds=res.get("seconds", st.get("seconds", {})),
+                      seconds_total=round(res.get("seconds_total", 0.0), 1))
         except Exception as exc:                              # noqa: BLE001 - surface, never hide
             st.update(state="failed", stage=f"crashed: {exc}")
 
@@ -560,8 +578,22 @@ def solve(clip_id: str, anchor: str = "", seed: str = "camera_start.json",
 
 @app.get("/api/run/{clip_id}/solve")
 def solve_status(clip_id: str) -> dict:
-    """How the background solve is going, or that none has run."""
-    return _SOLVES.get(clip_id) or {"state": "idle"}
+    """How the background solve is going, or that none has run.
+
+    The elapsed times are computed HERE rather than stamped when a stage changes, so they advance
+    between stage boundaries. A stage that has been running for five minutes while the total climbs
+    is the shape a hang has, and it is invisible in a progress bar — the pool deadlock of
+    2026-08-14 looked exactly like a slow clip for two days.
+    """
+    st = _SOLVES.get(clip_id)
+    if not st:
+        return {"state": "idle"}
+    out = {k: v for k, v in st.items() if not k.startswith("_")}
+    if st.get("state") == "running":
+        now = time.monotonic()
+        out["stage_seconds"] = round(now - st.get("_stage_t0", now), 1)
+        out["seconds_total"] = round(now - st.get("_t0", now), 1)
+    return out
 
 
 @app.post("/api/run/{clip_id}/flip")
@@ -637,10 +669,15 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
     if not (cam["focal_px"][n] > 0):
         raise HTTPException(400, f"frame {n} has no camera to refine — aim one first")
 
+    # Split, because the two halves are not comparable and knowing which dominates is the whole
+    # point of showing a time at all: finding the paint is ~98 % of a score and does not depend on
+    # the camera, the fit is the remaining 2 % and is the only part a better solver would shorten.
+    t_start = time.monotonic()
     bgr = cv2.imread(str(info.frame_path(n)))
     if bgr is None:
         raise HTTPException(404, f"{clip_id} frame {n} not decoded")
     dist, surface = paint_masks(bgr)
+    t_paint = time.monotonic()
     segs = detect_segments(dist, surface, method=str(body.get("method", "hough")))
     if len(segs) < 4:
         raise HTTPException(
@@ -690,6 +727,9 @@ def refine(clip_id: str, n: int, body: dict) -> dict:
 
     return {
         "frame": n, "which": which, "moved": moved,
+        "ms_total": round((time.monotonic() - t_start) * 1000.0),
+        "ms_paint": round((t_paint - t_start) * 1000.0),
+        "ms_fit": round((time.monotonic() - t_paint) * 1000.0),
         # Distinguished from "converged" so the viewer can say which happened: a fit that the paint
         # rejects is a different message from one that had nothing left to give.
         "refused_worse": bool(worse),

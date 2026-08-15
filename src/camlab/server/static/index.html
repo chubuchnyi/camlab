@@ -169,6 +169,7 @@
            last two pixels. Aim it roughly, press this. Measured over eight hand-aligned frames,
            a rough seed sits at 34.7 px and this takes it to 2.0. -->
       <button id="e-refine">auto-fit this frame</button>
+      <div class="small muted" id="e-note"></div>
       <button id="e-reset">reset this frame to the solve</button>
       <button id="e-resetall">reset every edit</button>
       <p class="small muted">
@@ -273,6 +274,14 @@
 import { createPitchView } from "/static/pitch_view.js?v=19";
 
 const $ = (id) => document.getElementById(id);
+
+// Seconds, at a precision a person can act on: under ten, tenths matter; a minute is easier read
+// as "2m14" than as "134.2 s". Timings are shown because a stage that takes 22 s and one that
+// hangs looked identical for two days, and the difference was a deadlock.
+const secs = (v) => v == null ? ""
+  : v < 10 ? `${v.toFixed(1)}s`
+  : v < 90 ? `${Math.round(v)}s`
+  : `${Math.floor(v / 60)}m${String(Math.round(v % 60)).padStart(2, "0")}`;
 const err = (m) => { $("err").textContent = m || ""; };
 
 const view = createPitchView({
@@ -738,15 +747,26 @@ async function pollSolve(id) {
   try {
     const d = await (await fetch(`/api/run/${id}/solve`)).json();
     if (d.state === "running") {
-      $("s-note").textContent = `${d.step}/${d.of} · ${d.stage}`;
+      // The current stage's own clock, not just the total. A stage that has been "running" for
+      // 300 s while the total climbs is the shape a hang has, and it is invisible in a bar.
+      const t = d.stage_seconds != null ? ` · ${secs(d.stage_seconds)}` : "";
+      const tot = d.seconds_total != null ? ` (${secs(d.seconds_total)} total)` : "";
+      $("s-note").textContent = `${d.step}/${d.of} · ${d.stage}${t}${tot}`;
       setBusy(false);                     // replace the previous tick's hold rather than stack it
       setBusy(true, `solving · ${d.stage}`, d.of ? d.step / d.of : undefined);
       return;
     }
     clearInterval(solvePoll); solvePoll = null;
     setBusy(false);
+    // Per stage, in the order they ran, with the total. Which stage costs what is the first
+    // question asked of a chain that is too slow, and it used to need a stopwatch.
+    const sec = d.seconds || {};
+    const timing = Object.keys(sec).length
+      ? "  ·  " + Object.entries(sec).map(([k, v]) => `${k} ${secs(v)}`).join(", ")
+        + (d.seconds_total != null ? `  =  ${secs(d.seconds_total)}` : "")
+      : "";
     const lines = Object.entries(d.stages || {}).map(([k, v]) => `${k}: ${v}`).join(" | ");
-    $("s-note").textContent = lines || d.stage || d.state;
+    $("s-note").textContent = (lines || d.stage || d.state) + timing;
     if (d.state === "done") {
       err("");
       await listClips(id);
@@ -913,6 +933,13 @@ $("e-refine").onclick = async () => {
       // `refit._accept` takes the fit only if the worst offset fell AND no correspondence was
       // lost. Refusing is a result, not a failure, and the hand alignment is left alone.
       err(`already the best fit these ${d.lines} lines allow — nothing changed`);
+    }
+    if (d.ms_total != null) {
+      // Split, because the two answer different questions. On g11710897 frame 5 it is 359 ms:
+      // 108 finding the paint, 251 fitting — the fit dominates, unlike a single residual where
+      // the paint is 98 % of it. Which half is which is the first thing anyone asks.
+      $("e-note").textContent =
+        `fit in ${d.ms_total} ms — ${d.ms_paint} finding the paint, ${d.ms_fit} fitting`;
     } else {
       const a = d.worst_line_before, b = d.worst_line_after;
       err(`fitted on ${d.lines} lines · worst line ${a == null ? "—" : a.toFixed(1)}`
