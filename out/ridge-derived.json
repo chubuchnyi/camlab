@@ -1,0 +1,381 @@
+[
+ {
+  "clip": "14604731_1080_1920_30fps",
+  "anchors": [
+   0,
+   60
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 517.5,
+   "line": "NO VERDICT \u2014 only 56/120 frames scored 4+ markings. (across 14.00 px (the camera) \u00b7 worst line 12.26 \u00b7 worst spot 53.70 (camera+paint gaps) \u00b7 3 markings/frame \u00b7 74 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 13.998172465636875,
+   "worst_line": 12.259048830199191,
+   "markings": 3,
+   "under_20": 27,
+   "n_supported": 56
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 360.7,
+   "line": "NO VERDICT \u2014 only 56/120 frames scored 4+ markings. (across 14.00 px (the camera) \u00b7 worst line 12.26 \u00b7 worst spot 53.70 (camera+paint gaps) \u00b7 3 markings/frame \u00b7 74 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 13.998172465636875,
+   "worst_line": 12.259048830199191,
+   "markings": 3,
+   "under_20": 27,
+   "n_supported": 56
+  }
+ },
+ {
+  "clip": "14604731_1080_1920_30fps_Copy",
+  "anchors": [
+   0,
+   4
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 466.7,
+   "line": "across  1.28 px (the camera) \u00b7 worst line  1.34 \u00b7 worst spot 16.14 (camera+paint gaps) \u00b7 6 markings/frame \u00b7 193 samples \u00b7 178/180 supported frames under 20 px",
+   "supported": true,
+   "across": 1.2845400053561207,
+   "worst_line": 1.3400917356744524,
+   "markings": 6,
+   "under_20": 178,
+   "n_supported": 180
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 438.5,
+   "line": "across  1.28 px (the camera) \u00b7 worst line  1.34 \u00b7 worst spot 16.14 (camera+paint gaps) \u00b7 6 markings/frame \u00b7 193 samples \u00b7 178/180 supported frames under 20 px",
+   "supported": true,
+   "across": 1.2845400053561207,
+   "worst_line": 1.3400917356744524,
+   "markings": 6,
+   "under_20": 178,
+   "n_supported": 180
+  }
+ },
+ {
+  "clip": "CRO_MOR_194948",
+  "anchors": [
+   0
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 291.5,
+   "line": "across  3.88 px (the camera) \u00b7 worst line  3.68 \u00b7 worst spot 13.70 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 304 samples \u00b7 120/120 supported frames under 20 px",
+   "supported": true,
+   "across": 3.8773731375202853,
+   "worst_line": 3.684560570023568,
+   "markings": 9,
+   "under_20": 120,
+   "n_supported": 120
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 286.4,
+   "line": "across  3.88 px (the camera) \u00b7 worst line  3.68 \u00b7 worst spot 13.70 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 304 samples \u00b7 120/120 supported frames under 20 px",
+   "supported": true,
+   "across": 3.8773731375202853,
+   "worst_line": 3.684560570023568,
+   "markings": 9,
+   "under_20": 120,
+   "n_supported": 120
+  }
+ },
+ {
+  "clip": "ENG_FRA_232015",
+  "anchors": [
+   0,
+   22,
+   37,
+   44,
+   78,
+   88,
+   136
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 660.7,
+   "line": "across  2.95 px (the camera) \u00b7 worst line  2.56 \u00b7 worst spot 16.28 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 396 samples \u00b7 180/180 supported frames under 20 px",
+   "supported": true,
+   "across": 2.9524313493946206,
+   "worst_line": 2.5607119619630803,
+   "markings": 9,
+   "under_20": 180,
+   "n_supported": 180
+  },
+  "wide": {
+   "scales": "2,4,7,13",
+   "ok": true,
+   "seconds": 747.1,
+   "line": "across  2.93 px (the camera) \u00b7 worst line  2.54 \u00b7 worst spot 17.01 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 395 samples \u00b7 180/180 supported frames under 20 px",
+   "supported": true,
+   "across": 2.930858888815849,
+   "worst_line": 2.5372646674554185,
+   "markings": 9,
+   "under_20": 180,
+   "n_supported": 180
+  }
+ },
+ {
+  "clip": "MOR_POR_181952",
+  "anchors": [
+   0,
+   36
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 87.7,
+   "line": "NO VERDICT \u2014 only 0/60 frames scored 4+ markings. (across 24.01 px (the camera) \u00b7 worst line 45.29 \u00b7 worst spot 161.75 (camera+paint gaps) \u00b7 2 markings/frame \u00b7 193 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 24.00876595250765,
+   "worst_line": 45.285758687640325,
+   "markings": 2,
+   "under_20": 0,
+   "n_supported": 0
+  },
+  "wide": {
+   "scales": "2,4,7,13",
+   "ok": true,
+   "seconds": 96.0,
+   "line": "NO VERDICT \u2014 only 0/60 frames scored 4+ markings. (across 24.01 px (the camera) \u00b7 worst line 45.29 \u00b7 worst spot 161.75 (camera+paint gaps) \u00b7 2 markings/frame \u00b7 193 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 24.00876595250765,
+   "worst_line": 45.285758687640325,
+   "markings": 2,
+   "under_20": 0,
+   "n_supported": 0
+  }
+ },
+ {
+  "clip": "NET_ARG_225042",
+  "anchors": [
+   0,
+   6,
+   13,
+   26
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 136.2,
+   "line": "across  5.73 px (the camera) \u00b7 worst line  5.90 \u00b7 worst spot 146.38 (camera+paint gaps) \u00b7 8 markings/frame \u00b7 615 samples \u00b7 57/60 supported frames under 20 px",
+   "supported": true,
+   "across": 5.726407572812292,
+   "worst_line": 5.902976038264217,
+   "markings": 8,
+   "under_20": 57,
+   "n_supported": 60
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 135.6,
+   "line": "across  5.73 px (the camera) \u00b7 worst line  5.90 \u00b7 worst spot 146.38 (camera+paint gaps) \u00b7 8 markings/frame \u00b7 615 samples \u00b7 57/60 supported frames under 20 px",
+   "supported": true,
+   "across": 5.726407572812292,
+   "worst_line": 5.902976038264217,
+   "markings": 8,
+   "under_20": 57,
+   "n_supported": 60
+  }
+ },
+ {
+  "clip": "demo_14604680",
+  "anchors": [
+   30
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 77.8,
+   "line": "across  1.42 px (the camera) \u00b7 worst line  1.47 \u00b7 worst spot  7.35 (camera+paint gaps) \u00b7 8 markings/frame \u00b7 282 samples \u00b7 60/60 supported frames under 20 px",
+   "supported": true,
+   "across": 1.4168695290443263,
+   "worst_line": 1.468551984775563,
+   "markings": 8,
+   "under_20": 60,
+   "n_supported": 60
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 79.0,
+   "line": "across  1.42 px (the camera) \u00b7 worst line  1.47 \u00b7 worst spot  7.35 (camera+paint gaps) \u00b7 8 markings/frame \u00b7 282 samples \u00b7 60/60 supported frames under 20 px",
+   "supported": true,
+   "across": 1.4168695290443263,
+   "worst_line": 1.468551984775563,
+   "markings": 8,
+   "under_20": 60,
+   "n_supported": 60
+  }
+ },
+ {
+  "clip": "g11710897",
+  "anchors": [
+   2,
+   39
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 291.8,
+   "line": "across 10.50 px (the camera) \u00b7 worst line  9.75 \u00b7 worst spot 23.42 (camera+paint gaps) \u00b7 4 markings/frame \u00b7 148 samples \u00b7 37/38 supported frames under 20 px",
+   "supported": true,
+   "across": 10.504035004399867,
+   "worst_line": 9.745519778796645,
+   "markings": 4,
+   "under_20": 37,
+   "n_supported": 38
+  },
+  "wide": {
+   "scales": "2,4,7,13",
+   "ok": true,
+   "seconds": 204.1,
+   "line": "across 19.69 px (the camera) \u00b7 worst line 14.21 \u00b7 worst spot 46.30 (camera+paint gaps) \u00b7 8 markings/frame \u00b7 241 samples \u00b7 39/40 supported frames under 20 px",
+   "supported": true,
+   "across": 19.69002554456076,
+   "worst_line": 14.209622229188115,
+   "markings": 8,
+   "under_20": 39,
+   "n_supported": 40
+  }
+ },
+ {
+  "clip": "g14604660",
+  "anchors": [
+   0
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 80.0,
+   "line": "across  1.78 px (the camera) \u00b7 worst line  1.56 \u00b7 worst spot 22.66 (camera+paint gaps) \u00b7 5 markings/frame \u00b7 218 samples \u00b7 40/40 supported frames under 20 px",
+   "supported": true,
+   "across": 1.7771488093539751,
+   "worst_line": 1.557663509506631,
+   "markings": 5,
+   "under_20": 40,
+   "n_supported": 40
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 79.6,
+   "line": "across  1.78 px (the camera) \u00b7 worst line  1.56 \u00b7 worst spot 22.66 (camera+paint gaps) \u00b7 5 markings/frame \u00b7 218 samples \u00b7 40/40 supported frames under 20 px",
+   "supported": true,
+   "across": 1.7771488093539751,
+   "worst_line": 1.557663509506631,
+   "markings": 5,
+   "under_20": 40,
+   "n_supported": 40
+  }
+ },
+ {
+  "clip": "g15449383",
+  "anchors": [
+   0
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 68.1,
+   "line": "NO VERDICT \u2014 only 0/40 frames scored 4+ markings. (across  5.90 px (the camera) \u00b7 worst line  3.78 \u00b7 worst spot 68.58 (camera+paint gaps) \u00b7 2 markings/frame \u00b7 83 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 5.899144848100303,
+   "worst_line": 3.776620730871879,
+   "markings": 2,
+   "under_20": 0,
+   "n_supported": 0
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 67.7,
+   "line": "NO VERDICT \u2014 only 0/40 frames scored 4+ markings. (across  5.90 px (the camera) \u00b7 worst line  3.78 \u00b7 worst spot 68.58 (camera+paint gaps) \u00b7 2 markings/frame \u00b7 83 samples, and both errors are a max over too few markings to mean anything.)",
+   "supported": false,
+   "across": 5.899144848100303,
+   "worst_line": 3.776620730871879,
+   "markings": 2,
+   "under_20": 0,
+   "n_supported": 0
+  }
+ },
+ {
+  "clip": "stadium_a",
+  "anchors": [
+   21,
+   28,
+   30,
+   35
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 77.7,
+   "line": "across  1.25 px (the camera) \u00b7 worst line  1.26 \u00b7 worst spot  7.17 (camera+paint gaps) \u00b7 7 markings/frame \u00b7 228 samples \u00b7 60/60 supported frames under 20 px",
+   "supported": true,
+   "across": 1.2463694447417508,
+   "worst_line": 1.2633523712913306,
+   "markings": 7,
+   "under_20": 60,
+   "n_supported": 60
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 77.2,
+   "line": "across  1.25 px (the camera) \u00b7 worst line  1.26 \u00b7 worst spot  7.17 (camera+paint gaps) \u00b7 7 markings/frame \u00b7 228 samples \u00b7 60/60 supported frames under 20 px",
+   "supported": true,
+   "across": 1.2463694447417508,
+   "worst_line": 1.2633523712913306,
+   "markings": 7,
+   "under_20": 60,
+   "n_supported": 60
+  }
+ },
+ {
+  "clip": "wp_194948",
+  "anchors": [
+   0,
+   15,
+   59,
+   81
+  ],
+  "shipped": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 271.2,
+   "line": "across  3.96 px (the camera) \u00b7 worst line  3.75 \u00b7 worst spot 13.87 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 304 samples \u00b7 120/120 supported frames under 20 px",
+   "supported": true,
+   "across": 3.9630327986317013,
+   "worst_line": 3.749785080955425,
+   "markings": 9,
+   "under_20": 120,
+   "n_supported": 120
+  },
+  "wide": {
+   "scales": "2,4,7",
+   "ok": true,
+   "seconds": 273.1,
+   "line": "across  3.96 px (the camera) \u00b7 worst line  3.75 \u00b7 worst spot 13.87 (camera+paint gaps) \u00b7 9 markings/frame \u00b7 304 samples \u00b7 120/120 supported frames under 20 px",
+   "supported": true,
+   "across": 3.9630327986317013,
+   "worst_line": 3.749785080955425,
+   "markings": 9,
+   "under_20": 120,
+   "n_supported": 120
+  }
+ }
+]

@@ -257,6 +257,26 @@ def run(clip_id: str, *, anchor: int | list[int] | None = None, seed: str = "cam
     started = time.monotonic()
     out["seconds"] = seconds
 
+    # **The ridge scales, from the clip's own paint, unless somebody said otherwise.** Measured
+    # over twelve clips against both constants (`findings/ridge-scales-per-clip-2026-08-15.md`):
+    # nine clips get `(2, 4, 7)` and are bit-for-bit unchanged, three get one more step, and
+    # `g11710897` goes from 4 markings a frame to 8 with 40 of 40 frames supported. Nothing
+    # regresses — which a blanket wide set did not manage: it took `demo_14604680` from 1.42 px to
+    # 15.51 and `14604731` from 14.00 to 24.67.
+    #
+    # Auto -> env/UI -> default, the override chain this repo requires everywhere. A caller that
+    # passed a value keeps it.
+    env_extra = dict(env_extra or {})
+    if not env_extra.get("CAMLAB_RIDGE_SCALES") and not os.environ.get("CAMLAB_RIDGE_SCALES"):
+        from camlab.measure.paint import scales_for_clip
+
+        info = ClipInfo.load(clip_id)
+        got = scales_for_clip(info.frame_path(f) for f in range(info.n_frames))
+        env_extra["CAMLAB_RIDGE_SCALES"] = ",".join(str(x) for x in got)
+        out["stages"]["scales"] = (
+            f"line widths {env_extra['CAMLAB_RIDGE_SCALES']}, measured from this clip's own paint"
+        )
+
     env = None
     if env_extra:
         env = {**os.environ, **{k: str(v) for k, v in env_extra.items() if v not in (None, "")}}
