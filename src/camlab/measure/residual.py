@@ -196,12 +196,31 @@ def world_to_image(focal: float, rvec: np.ndarray, centre: np.ndarray,
     return kmat @ np.column_stack([rot[:, 0], rot[:, 1], t])
 
 
-#: How many frames' paint to keep. Every scoring loop in this repo hammers ONE frame with many
-#: cameras — a bootstrap anchor takes ~7000, the polish pass 6–8, the refit one per iteration — so
-#: a cache of a handful covers all of them. A whole-clip sweep touches each frame once and gains
-#: nothing from a bigger one, it would only hold memory: each entry is a float32 distance map and a
-#: bool surface mask at full resolution, about 12 MB on 1920×1080.
+#: How many frames' paint to keep. Most scoring loops here hammer ONE frame with many cameras — a
+#: bootstrap anchor takes ~7000, the polish pass 6–8, the refit one per iteration — so a handful
+#: covers them, and each entry is a float32 distance map plus a bool surface mask at full
+#: resolution, about 12 MB on 1920×1080.
+#:
+#: **But `solve_shared_centre` walks a SET of probe frames in a cycle**, and a cycle longer than
+#: the cache misses every single time — LRU's worst case, not a near miss. On `g11710897` that is
+#: 7 probe frames through 4 entries: **114 ms a residual against 29** once the set fits, four
+#: times, and the stage is 41 % of the whole chain. A loop that revisits frames must say how many
+#: it revisits, hence `hold_frames`.
 EVIDENCE_CACHE = 4
+
+
+def hold_frames(n: int, *, cap: int = 48) -> int:
+    """Ask the cache to hold `n` frames' paint, and return what it will actually hold.
+
+    For a caller that cycles over a known set. Sizing it from the outside rather than guessing a
+    bigger default, because the cost of being wrong is asymmetric: too small is a silent 4× on a
+    stage, too large is held memory on a machine that may be running a browser and a solve.
+    """
+    global EVIDENCE_CACHE
+    EVIDENCE_CACHE = max(4, min(int(n), cap))
+    while len(_EVIDENCE) > EVIDENCE_CACHE:
+        _EVIDENCE.popitem(last=False)
+    return EVIDENCE_CACHE
 
 _EVIDENCE: OrderedDict = OrderedDict()
 

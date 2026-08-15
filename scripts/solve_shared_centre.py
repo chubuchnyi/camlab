@@ -38,7 +38,7 @@ import cv2  # noqa: E402
 from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.paint import paint_masks  # noqa: E402
-from camlab.measure.residual import frame_residual  # noqa: E402
+from camlab.measure.residual import frame_residual, hold_frames  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.refit import refit_frame_lm  # noqa: E402
 
@@ -111,6 +111,11 @@ def main() -> None:
         return float(np.nanmedian(w)), int(np.nansum(np.asarray(w) < 20.0)), len(w)
 
     probe = list(range(0, n, args.probe))
+    # The search scores this set over and over — 26 stops on a 40-frame clip — so the paint cache
+    # has to hold it or every residual is a miss. It held four by default against seven probe
+    # frames here: 114 ms a residual against 29, and this stage is 41 % of the chain.
+    held = hold_frames(len(probe) + 2)
+    print(f"   holding {held} frames' paint for the {len(probe)} probe frames")
     # The span has to come from the data. A solve with three hand anchors strings out over 21 m and
     # a fixed +/-6 m covers it; the anchor-free one strings out over 98 m, and the same +/-6 m
     # returned its minimum AT THE EDGE — a boundary answer dressed up as an optimum, 7.06 px where
