@@ -14,10 +14,45 @@ set of numbers:
 | `CRO_MOR_194948` | 120 × 1920×1080 | 12 | 278.8 s | **156.5 s** | 1.78× |
 | `fan` | 120 × 1080×608 | 7 | 188.6 s | **142.0 s** | 1.33× |
 
-**Every number the chain reports is unchanged on all three** — `broadcast` scores across
-7.24 / 4.32 / 4.27 px through the stages, worst line 6.81 / 4.00 / 3.88, worst spot
-11.98 / 10.50 / 10.43, 60/60 frames at a median focal of 4201.9 px; `CRO_MOR_194948` 120/120 at
-5962.7; `fan` 120/120 at 3001.8. The camera is bit for bit the one that was there before.
+**Then every clip in `runs/`, and the camera files compared BYTE FOR BYTE.** Not "the metric
+agrees" — the five JSON files each chain writes, `cmp`'d. If the bytes are the same the accuracy
+cannot have moved, and nothing weaker was going to settle it:
+
+| clip | frames | seed | before | now | | camera files |
+|---|---|---|---|---|---|---|
+| `14604731_1080_1920_30fps` | 120 | `camera_start` | 260.7 s | 149.4 s | 1.74× | 5/5 identical |
+| `14604731_..._Copy` | 180 | `camera_start` | 437.4 | 245.7 | 1.78× | 5/5 identical |
+| `broadcast` | 60 | `camera_seed_used` | 121.0 | 71.2 | 1.70× | 5/5 identical |
+| `CRO_MOR_194948` | 120 | `camera_seed_used` | 281.8 | 154.1 | 1.83× | 5/5 identical |
+| `demo_14604680` | 60 | `camera_start` | 44.2 | 27.3 | 1.62× | 5/5 identical |
+| `ENG_FRA_232015` | 180 | `camera_seed_used` | 688.6 | 379.0 | 1.82× | 5/5 identical |
+| `fan` | 120 | `camera_boot` | 189.6 | 143.8 | 1.32× | 5/5 identical |
+| `g11710897` | 40 | `camera_seed_used` | 113.7 | 65.1 | 1.75× | 5/5 identical |
+| `g14604660` | 40 | `camera_seed_used` | 80.0 | 49.3 | 1.62× | 5/5 identical |
+| `g15449383` | 40 | `camera_seed_used` | 140.6 | 108.0 | 1.30× | 5/5 identical |
+| `MOR_POR_181952` | 60 | `camera_start` | 94.0 | 60.8 | 1.55× | 5/5 identical |
+| `NET_ARG_225042` | 60 | `camera_start` | 138.7 | 79.4 | 1.75× | 5/5 identical |
+| `stadium_a` | 60 | `camera_start` | 54.4 | 37.4 | 1.45× | 5/5 identical |
+| `wp_194948` | 120 | `camera_start` | 283.7 | 157.9 | 1.80× | 5/5 identical |
+| **all fourteen** | **1160** | | **2928.4 s** | **1728.4 s** | **1.69×** | **70/70 identical** |
+
+**Seventy camera files, none of them one byte different.** And once more with a non-default scale
+ladder, because everything above runs at the shipped `(2, 4, 7)`: `g11710897` under
+`CAMLAB_RIDGE_SCALES=2,4,7,14,28` is 148.4 → 82.3 s, **1.80×, 5/5 identical**.
+
+**Read the spread, not the mean.** The clips that solve cleanly get 1.62–1.83×. The two that get
+least — `fan` 1.32× and `g15449383` 1.30× — are the two with many unfittable frames, so their runs
+are dominated by `solve_selfheal`, which is the stage this work did not touch and which re-runs
+SIFT per repaired frame. That is not a disappointment, it is a pointer: **the next change should
+target exactly the clips this one helped least**, and it is item 1 of what is left.
+
+Two caveats on the table itself, both about what it is NOT. `bench_chain.py` calls the stage
+scripts directly rather than `pipeline.run`, so `scales_for_clip` never runs and every clip uses
+the default ladder — the per-clip ladder is covered instead by `painted_width_px` being identical
+in `check_paint_equivalence.py`. And several rows say NO VERDICT: those clips are unsolved from
+the seed available in a bare `runs/` directory, `fan` most of all, whose real chain starts from
+`camera_manual.json`. Both sides run the identical configuration, so the byte comparison is
+unaffected; the wall clocks are of a real chain, the cameras are not always of a good one.
 
 `fan` gets a third of what `CRO_MOR_194948` gets, and the spread is the useful part. `fan` is a
 third of the pixels, so the paint stage is a smaller share of it, and this run is 97 s of 142 in

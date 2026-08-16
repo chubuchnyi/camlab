@@ -112,9 +112,8 @@ Measured on a laptop CPU — 11th-gen i7-11850H, no GPU in the machine:
 
 | | |
 |---|---|
-| full chain, `broadcast`, 60 frames at 1920×1080 | **70.6 s** (119.7 s before 2026-08-16) |
-| full chain, `CRO_MOR_194948`, 120 frames at 1920×1080 | **156.5 s** (278.8 s before) |
-| full chain, `fan`, 120 frames at 1080×608 | **142.0 s** (188.6 s before) |
+| full chain, `broadcast`, 60 frames at 1920×1080 | **71 s** (121 s before 2026-08-16) |
+| full chain, every clip in `runs/` — 14 clips, 1160 frames | **1728 s** (2928 s before), 1.30–1.83× |
 | the paint stage, one 1920×1080 frame | **34 ms** (66 ms before) |
 | scoring one camera against a frame whose paint is cached | **2.1 ms** (11.8 ms before) |
 | peak memory, per-frame work | 180 MB |

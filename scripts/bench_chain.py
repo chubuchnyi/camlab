@@ -51,7 +51,8 @@ def main() -> int:
 
     seed = args.seed
     if seed is None:
-        for cand in ("camera_seed_used.json", "camera_start.json", "camera_manual.json"):
+        for cand in ("camera_seed_used.json", "camera_start.json", "camera_boot.json",
+                     "camera_auto.json", "camera_manual.json"):
             if (work / "runs" / args.clip / cand).exists():
                 seed = cand
                 break
