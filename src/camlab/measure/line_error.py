@@ -147,6 +147,36 @@ def straight_markings() -> list[tuple[int, np.ndarray]]:
     return _STRAIGHT
 
 
+#: `_straight_markings_h`'s answer. Separate from `_STRAIGHT` because it is derived from it and
+#: clearing one must clear the other; `_clear_pitch_cache` is the only thing that should.
+_STRAIGHT_H: list[tuple[int, np.ndarray, np.ndarray, int]] | None = None
+
+
+def _straight_markings_h() -> list[tuple[int, np.ndarray, np.ndarray, int]]:
+    """`(index, world endpoints, HOMOGENEOUS endpoints, family)` for every straight marking.
+
+    All four are constants of the pitch and `line_errors` needs all four on every evaluation.
+    Building `np.column_stack([world, np.ones(2)])` inside its loop cost 209 000 allocations a
+    stage for seventeen fixed 2x3 arrays, and `world_family` an `arctan2` and a `degrees` for each.
+    """
+    global _STRAIGHT_H
+    if _STRAIGHT_H is None:
+        got = []
+        for k, world in straight_markings():
+            homo = np.column_stack([world, np.ones(2)])
+            homo.flags.writeable = False
+            got.append((k, world, homo, world_family(world)))
+        _STRAIGHT_H = got
+    return _STRAIGHT_H
+
+
+def _clear_pitch_cache() -> None:
+    """Drop what `straight_markings` and `_straight_markings_h` built. For tests that move the
+    pitch model, and for nothing else — the pitch does not change during a solve."""
+    global _STRAIGHT, _STRAIGHT_H
+    _STRAIGHT = _STRAIGHT_H = None
+
+
 def _unit(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     d = b - a
     return d / (np.linalg.norm(d) + 1e-12)
@@ -185,9 +215,15 @@ def clip_to_image(seg: np.ndarray, width: int, height: int) -> np.ndarray | None
     return np.array([p0 + t0 * d, p0 + t1 * d])
 
 
-def _overlap(model: np.ndarray, found: np.ndarray) -> tuple[float, float, float]:
-    """Extent of `found` projected onto `model`'s direction, clipped to `model`. `(lo, hi, len)`."""
-    u = _unit(model[0], model[1])
+def _overlap(model: np.ndarray, found: np.ndarray,
+             u: np.ndarray | None = None) -> tuple[float, float, float]:
+    """Extent of `found` projected onto `model`'s direction, clipped to `model`. `(lo, hi, len)`.
+
+    `u` is `model`'s unit direction. The caller almost always has it already — `line_errors`
+    computes it once per marking and then compares that marking against every detected segment —
+    and recomputing it here made `_unit` the second most-called function in the repo.
+    """
+    u = _unit(model[0], model[1]) if u is None else u
     t_model = np.array([0.0, float((model[1] - model[0]) @ u)])
     t_found = np.sort((found - model[0]) @ u)
     lo = max(t_model[0], t_found[0])
@@ -195,20 +231,29 @@ def _overlap(model: np.ndarray, found: np.ndarray) -> tuple[float, float, float]
     return lo, hi, max(0.0, hi - lo)
 
 
-def compare_line(model: np.ndarray, found: np.ndarray) -> tuple[float, float, float, np.ndarray,
-                                                                np.ndarray]:
+def compare_line(model: np.ndarray, found: np.ndarray, *,
+                 u: np.ndarray | None = None, nrm: np.ndarray | None = None,
+                 v: np.ndarray | None = None) -> tuple[float, float, float, np.ndarray,
+                                                       np.ndarray]:
     """`(signed offset px, signed angle deg, overlap px, point on model, point on found)`.
 
     The offset is measured at the middle of the overlap, perpendicular to the model line, which is
     where a human would hold a ruler: at the part of the line both actually cover.
+
+    `u`, `nrm` and `v` are the model's unit direction, its left normal, and the found segment's
+    unit direction. They are optional and default to being computed here, which is what every
+    caller outside `line_errors` wants. `line_errors` passes them, because it already has all
+    three: `u` and `nrm` are per-marking and this runs per marking PER SEGMENT, and `v` is
+    `seg_dir[si]`, computed once for the whole call. Recomputing them here meant a 2-vector norm
+    ran about four times per comparison and `np.linalg.norm` was called a million times a stage.
     """
-    u = _unit(model[0], model[1])
-    nrm = np.array([-u[1], u[0]])                   # left normal of the model line
-    lo, hi, length = _overlap(model, found)
+    u = _unit(model[0], model[1]) if u is None else u
+    nrm = np.array([-u[1], u[0]]) if nrm is None else nrm    # left normal of the model line
+    lo, hi, length = _overlap(model, found, u)
     t_mid = (lo + hi) / 2.0 if length > 0 else float((model[1] - model[0]) @ u) / 2.0
     p_model = model[0] + t_mid * u
 
-    v = _unit(found[0], found[1])
+    v = _unit(found[0], found[1]) if v is None else v
     if v @ u < 0:
         v = -v                                      # same sense, so the angle is not 180-ambiguous
 
@@ -260,8 +305,8 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
     min_cos = float(np.cos(np.radians(match_angle_deg)))
 
     model: list = []
-    for k, world in straight_markings():
-        q = np.column_stack([world, np.ones(2)]) @ h.T
+    for k, _world, world_h, family in _straight_markings_h():
+        q = world_h @ h.T
         if np.any(np.abs(q[:, 2]) < 1e-9):
             continue
         uv = q[:, :2] / q[:, 2, None]
@@ -281,17 +326,18 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
         uv = vis
 
         u = _unit(uv[0], uv[1])
+        nrm_u = np.array([-u[1], u[0]])
         cands = []
         for si, (p, v) in enumerate(zip(seg_pts, seg_dir, strict=True)):
             if abs(float(v @ u)) < min_cos:
                 continue
-            off, ang, ov, p1, p2 = compare_line(uv, p)
+            off, ang, ov, p1, p2 = compare_line(uv, p, u=u, nrm=nrm_u, v=v)
             if ov < min_overlap * vis_len:
                 continue
             if abs(off) > max_offset_px:
                 continue
             cands.append((si, off, ang, ov, p1, p2, p))
-        model.append((k, uv, u, cands, world_family(world)))
+        model.append((k, uv, u, cands, family))
 
     return _assign_in_order(model, seg_pts)
 
