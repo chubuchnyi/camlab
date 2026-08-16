@@ -33,12 +33,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import cv2  # noqa: E402
 
 from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
-from camlab.measure.paint import paint_masks  # noqa: E402
-from camlab.measure.residual import frame_residual, hold_frames  # noqa: E402
+from camlab.measure.residual import frame_evidence_cached, frame_residual, hold_frames  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.refit import refit_frame_lm  # noqa: E402
 
@@ -91,9 +89,14 @@ def main() -> None:
 
     seg_cache: dict[int, np.ndarray] = {}
 
+    # Two caches, and they hold different things on purpose. `seg_cache` holds the SEGMENTS, which
+    # are a few hundred bytes, and is what stops the search re-running Hough on the probe frames at
+    # all 26 of its stops. The evidence cache underneath holds the paint, ~10 MB a frame, and is
+    # shared with `frame_residual` — which this used to go around by calling `paint_masks`
+    # directly, so a frame's paint was detected once here and again for its residual.
     def segs(i):
         if i not in seg_cache:
-            d, s = paint_masks(cv2.imread(str(info.frame_path(i))))
+            d, s = frame_evidence_cached(info.frame_path(i))[:2]
             seg_cache[i] = detect_segments(d, s, method="hough")
         return seg_cache[i]
 
@@ -155,16 +158,25 @@ def main() -> None:
     centre = centroid + t_best * direction
     print(f"\n   best at t = {t_best:+.2f} m -> {np.round(centre, 2)}, {med:.2f} px on the probe")
 
-    sol = solve_at(centre, range(n))
+    # The final solve and the before/after pair, ONE FRAME AT A TIME. This was three passes over
+    # the clip — `solve_at` over every frame, then a sweep for `before`, then a sweep for `after` —
+    # and the paint cache holds a handful of frames, so each pass missed everything the one before
+    # had detected. `segs(i)` detects frame `i`'s paint and both residuals read it, so taking them
+    # adjacent means each frame is detected once. Same numbers, and the stage goes from 189
+    # `paint_masks` on a 60-frame clip to 60, which is the information content.
+    sol, before, after = {}, [], []
+    for i in range(n):
+        r = refit_frame_lm(segs(i), src["focal_px"][i], np.asarray(src["rotation"][i], float),
+                           centre, info.width, info.height, cx, cy, free_position=False)
+        sol[i] = (r.focal_px, r.rotation, r.position)
+        before.append(frame_residual(info.frame_path(i), src["focal_px"][i], src["rotation"][i],
+                                     src["position"][i], frame=i, cx=cx, cy=cy).worst_line_px)
+        after.append(frame_residual(info.frame_path(i), r.focal_px, r.rotation, centre,
+                                    frame=i, cx=cx, cy=cy).worst_line_px)
     focal = np.array([sol[i][0] for i in range(n)])
     rot = np.array([sol[i][1] for i in range(n)])
     posn = np.tile(centre, (n, 1))
-
-    b = np.array([frame_residual(info.frame_path(i), src["focal_px"][i], src["rotation"][i],
-                                 src["position"][i], frame=i, cx=cx, cy=cy).worst_line_px
-                  for i in range(n)])
-    a = np.array([frame_residual(info.frame_path(i), focal[i], rot[i], centre,
-                                 frame=i, cx=cx, cy=cy).worst_line_px for i in range(n)])
+    b, a = np.array(before), np.array(after)
 
     out = write_camera(
         info.dir / args.out, model=f"{src['model']}+shared_centre", clip_id=info.clip_id,

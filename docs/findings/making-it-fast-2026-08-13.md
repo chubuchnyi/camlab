@@ -1,5 +1,28 @@
 # Making it fast: what worked, what did not, and two numbers I got wrong
 
+> **Corrected 2026-08-16 — four of the conclusions below are wrong, and none of the numbers had a
+> script.** See `making-it-fast-again-2026-08-16.md`.
+>
+> 1. *"The honest ceiling is ~2×"* on `ridge_map`. It was **10.9×**. The argument counts the
+>    QUESTIONS asked, which is right and unchanged; it says nothing about the PASSES OVER THE
+>    FRAME, which is the only thing that costs anything on a workload this doc calls memory-bound.
+>    The algebra factors and the loop fits in uint8.
+> 2. *"The camera-dependent remainder is 7 ms."* It is **12–13 ms, and 95 % of a WARM score** — the
+>    half every search loop pays over and over once the paint is cached, which is the win recorded
+>    below. The day was spent on the 456 ms that a cache had just made a one-off.
+> 3. *"Process parallelism. Refuted."* The per-frame unit gets **2.8× on eight workers** now. The
+>    reasoning was right and `parallel.py` predicted the lift; the table never separated the JPEG
+>    decode (which scales nearly linearly) from the paint, and its pool's `spawn` was inside the
+>    stopwatch.
+> 4. *"~60 unavoidable passes over the frame."* They were about 100 counting temporaries and
+>    scatters, they were not unavoidable, and they are 26 now. The same loop is called 24 passes in
+>    `parallel.py` and `landmines.md`.
+>
+> What survives, and is the better half of this doc: the paint cache, the `thin` rewrite, the
+> sparse-trick asymmetry, and the `setNumThreads(1)` correction — which is still the cleanest
+> refutation in the repo.
+
+
 Measured 2026-08-13, prompted by a question about Rust, threads and GPUs, and by the operator's note
 that **the current clip lengths are not the target** — long video and eventually a live stream are.
 

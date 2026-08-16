@@ -28,7 +28,9 @@ how long the lens is. Neither alone is a camera.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -45,6 +47,70 @@ RANSAC_PX = 3.0
 #: Below this many inliers a pair is dropped rather than trusted. A homography from 20 matches on a
 #: crowd is a number, not a measurement.
 MIN_INLIERS = 40
+
+#: How many frames' SIFT to keep, across calls. A descriptor set is `max_features` x 128 float32
+#: plus its keypoints — about 2.5 MB at the shipped 4000 — so this holds ~60 MB.
+#:
+#: **The cache has to outlive the call, and until 2026-08-16 it did not.** `measure_pairs` built a
+#: `dict` inside itself, which is right for `solve_carry`: one call over the whole clip, one
+#: `detectAndCompute` a frame. `solve_selfheal` calls it as a PAIR, inside
+#: `for round -> for bad frame -> for side`, so the cache held two entries and died. Frame `i` was
+#: described once per side, and the good neighbours bracketing a contiguous bad block are the same
+#: two frames for every `i` in it and were described again for each — up to `4 x bad x rounds`
+#: calls where the clip has only `frames` distinct images.
+#:
+#: Measured, whole chain, on the two clips it costs most — which are exactly the two the rest of
+#: the 2026-08-16 speed work helped least, because they are the clips with many unfittable frames
+#: and so the ones self-heal dominates:
+#:
+#:     clip           self-heal        chain          against the 2026-08-13 base
+#:     fan            97.6 -> 54.2 s   144.0 -> 101.8   1.32x -> **1.86x**
+#:     g15449383      69.1 -> 43.7     110.3 ->  85.2   1.30x -> **1.65x**
+#:
+#: and nothing where it has nothing to hit: `broadcast` 74.0 -> 73.7 s, one `measure_pairs` call
+#: over the whole clip, whose own call-local cache was already correct. `g11710897` 67.9 -> 65.8.
+#: Every camera file the chain writes is byte-for-byte unchanged on all four.
+#:
+#: Keyed on path, size, mtime and `max_features`: the first three because a re-ingest must
+#: invalidate rather than serve the previous decode's descriptors under the new frame's name — the
+#: rule `frame_evidence_cached` already keeps — and the fourth because it changes what SIFT returns.
+DESCRIPTOR_CACHE = 24
+
+_DESCRIPTORS: OrderedDict = OrderedDict()
+
+
+def _feats(sift, path, max_features: int):
+    """`(keypoints, descriptors)` for one frame, computed once per process.
+
+    Exact rather than approximately exact: SIFT is deterministic, so a hit is the same bytes the
+    call would have produced. The one way a cache like this could still move an answer is by
+    changing how often a randomised downstream step is called — `findHomography` is `USAC_MAGSAC`
+    here — and that was checked before this landed rather than assumed: a repeat call returns the
+    identical homography, an extra `detectAndCompute` between two calls does not change it, and
+    advancing OpenCV's global RNG does not change `findHomography`. USAC seeds itself.
+    """
+    import cv2
+
+    p = Path(path)
+    st = p.stat()
+    key = (str(p), st.st_size, st.st_mtime_ns, int(max_features))
+    hit = _DESCRIPTORS.get(key)
+    if hit is not None:
+        _DESCRIPTORS.move_to_end(key)
+        return hit
+    img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(path)
+    got = sift.detectAndCompute(img, None)
+    _DESCRIPTORS[key] = got
+    while len(_DESCRIPTORS) > DESCRIPTOR_CACHE:
+        _DESCRIPTORS.popitem(last=False)
+    return got
+
+
+def clear_descriptor_cache() -> None:
+    """Drop it. For tests, and for a caller that has finished with a clip and wants the memory."""
+    _DESCRIPTORS.clear()
 
 
 @dataclass(frozen=True)
@@ -78,15 +144,9 @@ def measure_pairs(frame_paths: dict[int, object], gaps=DEFAULT_GAPS,
     import cv2
 
     sift = cv2.SIFT_create(nfeatures=max_features)
-    cache: dict[int, tuple] = {}
 
     def feats(f: int):
-        if f not in cache:
-            img = cv2.imread(str(frame_paths[f]), cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                raise FileNotFoundError(frame_paths[f])
-            cache[f] = sift.detectAndCompute(img, None)
-        return cache[f]
+        return _feats(sift, frame_paths[f], max_features)
 
     matcher = cv2.BFMatcher(cv2.NORM_L2)
     frames = sorted(frame_paths)

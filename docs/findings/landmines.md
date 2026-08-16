@@ -101,17 +101,65 @@ Ordered by how much they cost.
   identical trick on `ridge_map` is **3× SLOWER**, because `val >= RIDGE_MIN_V` covers 62–98 % of
   the frame so there is nothing to skip, and fancy indexing gives up the contiguity the dense
   version runs on. Measure the density before reaching for it.
-- **"10× headroom" from a primitive that answers a different question is not headroom.** A single
-  `MORPH_TOPHAT` is 10 ms against `ridge_map`'s 109, and that comparison is meaningless: the top-hat
-  asks "brighter than the neighbourhood" once, `ridge_map` asks a directional question twelve times
-  with a turf condition on each. Written as morphology *exactly* it comes out 1.1–2.2×, the same as
-  simply not reallocating. The real ceiling was ~2×, and I quoted 10.
-- **This workload is memory-bound, and more cores do nothing.** Scoring 60 frames on 8 processes,
-  each pinned to one OpenCV thread: **7.8 cores busy, 130 s of CPU against 20, and the same 16.8 s
-  wall clock**. `paint_masks` costs MORE per pixel as the frame grows — 64, 76, 107 ms/Mpx at 0.1,
-  0.5 and 2.1 Mpx — because `ridge_map` makes 24 full passes and falls out of cache. Parallelism
-  spreads the waiting, it does not shorten it. What worked was removing the work: caching the paint
-  per frame is 36.8×. `parallel.default_workers()` returns 1 on purpose.
+- **A ceiling argued from the number of QUESTIONS is not a ceiling on the number of PASSES, and on
+  this workload only the passes cost anything.** `ridge_map`'s own docstring put its ceiling at ~2×
+  on the grounds that a `MORPH_TOPHAT` asks "brighter than the neighbourhood" once where it asks a
+  directional question twelve times with a turf condition on each. The question count was right and
+  is unchanged; the answer was **10.9×**, because the algebra factors — a max of differences sharing
+  a left term is that term minus a min — and the whole loop then fits in uint8.
+  (`making-it-fast-again-2026-08-16.md`.) The earlier landmine, still true as far as it goes: "10×
+  headroom" measured against a primitive that answers a *different* question is not headroom.
+- **cProfile ranks by CALL COUNT as much as by cost, and it is wrong by an order of magnitude on a
+  function called a quarter of a million times.** It reported `compare_line` at 259 331 calls and
+  **9.8 s of a 40.3 s `shared centre` stage**. Removing all 259 331 calls changed that stage by
+  nothing measurable and `line_errors` itself by 0.685 → 0.698 ms. cProfile adds about a microsecond
+  of bookkeeping per observed call, and charges the callees the same way — which is how
+  `np.linalg.norm` appeared at a million calls a stage. The same profile was right about
+  `straight_markings` (6300 calls, 5.1 s, and it held up end to end). **A profile is trustworthy
+  for ranking functions with similar call counts and misleading across them**; confirm with a wall
+  clock on the function itself before rewriting it.
+- **The same commit measures 155.3 s and 119.7 s on the same machine on the same clip.** A 30 %
+  spread on background load. A stage-by-stage progression assembled as each change lands, over two
+  hours, is not a progression — it is a record of the machine's mood, and the first version of
+  `making-it-fast-again-2026-08-16.md` read 2.22× where the answer is 1.70×. Re-run every point in
+  one sitting, interleaved, and print `getloadavg()`.
+- **Whether vectorising wins is a property of the data, not of the technique** — the same rule the
+  sparse trick already has here, one level up. Replacing `line_errors`' per-segment Python loop
+  with one `(N, 2)` pass is a **1.10× on the whole chain at twelve segments a frame, and a wash at
+  nine**: below about ten, the fancy indexing and the broadcast cost what the loop cost. N here is
+  set by `MIN_MERGED_PX` and is 7–12.
+- **A row-wise dot of 2-vectors is not bit-for-bit `a @ b`, and this repo compares its metric with
+  `==`.** BLAS's two-element dot fuses its multiply and add and rounds once; `(A * B).sum(axis=1)`,
+  `A @ b`, the explicit `A[:,0]*B[:,0] + A[:,1]*B[:,1]` and `np.einsum` all round twice and differ
+  in the last bit. Only `np.matmul(A[:,None,:], B[:,:,None])` agrees on every one of 20 000 random
+  pairs. It moved `line_errors`' offsets by 1e-16 to 9e-14 on 12 of 14 clips, which matters because
+  `_assign_in_order` settles which segment a marking gets with `best == take`. A stack of
+  matrix-vector products, `(M, 2, 2) @ u`, is unaffected.
+- **An instrument that invents its own input measures the input.** `bench_residual_warm` fed the
+  normal walk random points with random directions instead of the ones `frame_residual` actually
+  passes. Real normals point ACROSS real markings, so most rays find paint in the first pixel; the
+  synthetic set has no such structure, and once the walk gained an early exit it reported the walk
+  as costing **167 % of the whole score it is part of**. Capture the real arguments and time those.
+- **Before believing a profile, check the profiler is profiling the shipped function.**
+  `bench_paint_breakdown.py`'s first draft carried a private copy of `ridge_map`'s loop and went on
+  reporting the old cost of a function that had been rewritten. A stale run directory, in an
+  instrument. Time the shipped callable, and derive sub-costs by subtraction.
+- **A number taken on a busy machine is not comparable with one taken on a quiet one, and no perf
+  table in this repo before 2026-08-16 records which it was.** Every bench prints `getloadavg()`
+  now and says so above 1.0.
+- **This workload is memory-bound — and the wall moves when the traffic does.** Scoring 60 frames
+  on 8 processes, each pinned to one OpenCV thread, was **7.8 cores busy, 130 s of CPU against 20,
+  and the same 16.8 s wall clock**. After the paint stage's traffic was cut ~3.3× the same
+  experiment gives **2.8× on eight workers**, with worker CPU for identical work rising 3.7 s → 19.1
+  s from 1 to 16 — which is the bandwidth wall stated in the currency that actually says so.
+  Two faults in the original instrument, both worth avoiding: it never separated the JPEG **decode**
+  from the paint (the decode scales nearly linearly to four workers — it is libjpeg, it is compute),
+  and the pool's **spawn** was inside the stopwatch. `resource.getrusage(RUSAGE_CHILDREN)` counts
+  only children that have already **exited**, so with a live pool it reports the previous
+  configuration's teardown; have each worker time itself with `time.process_time()`.
+  What worked best was still removing the work outright: caching the paint per frame is 36.8×.
+  `parallel.default_workers()` returns **2**, and raising it to 4 or 6 moves the whole chain by
+  less than the noise, because `map_items` has one caller and it is not where the time is.
 - **OpenCV already threads its own operators, so measure before parallelising them.** `measure_pairs`
   runs at **10.8 cores busy** unaided; a process pool over it came out slower (10.4 s → 11.2 s), and
   `cv2.setNumThreads(1)` takes it from 12.7 s to 38.4. The repo's own line — "one core is the

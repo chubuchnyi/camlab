@@ -125,14 +125,31 @@ GRASS_HUE_RANGE = (25, 95)
 
 
 def _turf(hsv: np.ndarray) -> np.ndarray:
-    """Turf pixels, keyed to this frame's own dominant hue **among the hues grass can be**."""
+    """Turf pixels, keyed to this frame's own dominant hue **among the hues grass can be**.
+
+    Returns a 0/255 `uint8` mask rather than a bool one, because that is what OpenCV's kernels
+    both produce and consume and converting it back costs a full pass for nothing. Truthiness,
+    `.any()` and boolean indexing all read the same.
+
+    The question is unchanged and the mask is **bit-identical** to the version this replaced; what
+    changed is that it stopped asking through strided views. `hsv[..., 0]` has a stride of three,
+    so every comparison on it walks the interleaved buffer taking one byte in three, and the old
+    form built about seven full-frame temporaries that way — `abs`, `astype`, a subtract, three
+    compares and two ands. `cv2.inRange` asks the identical question in ONE pass over the layout
+    the image is already in, and `cv2.calcHist` replaces the boolean gather that fed `np.bincount`.
+    Measured over four clips at four frames each: 11.8 → 4.9 ms on `broadcast`, 12.3 → 4.9 on
+    `CRO_MOR_194948`, 12.0 → 5.3 on `g11710897`, 3.5 → 1.6 on `fan`. 2.2–2.5×, and this stage does
+    not appear at all in the performance day's account of where `paint_masks` spends its time.
+
+    `inRange`'s bounds are inclusive and the old test was strict, so `s > 80` is passed as 81. On
+    integers those are the same set; on anything else they would not be.
+    """
     import cv2
 
-    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    lit = (s > 80) & (v > 80)
-    if not lit.any():
-        return np.zeros(h.shape, dtype=bool)
-    hist = np.bincount(h[lit].ravel(), minlength=180).astype(np.float32)
+    lit = cv2.inRange(hsv, (0, 81, 81), (180, 255, 255))
+    if not cv2.countNonZero(lit):
+        return np.zeros(hsv.shape[:2], np.uint8)
+    hist = cv2.calcHist([hsv], [0], lit, [180], [0, 180]).ravel()
     smooth = cv2.GaussianBlur(hist.reshape(-1, 1), (1, 5), 0).ravel()
     lo, hi = GRASS_HUE_RANGE
     band = smooth[lo:hi + 1]
@@ -140,9 +157,10 @@ def _turf(hsv: np.ndarray) -> np.ndarray:
         # No green anywhere. Returning the unbounded peak would hand back the sky; returning
         # nothing says "there is no pitch in this picture", which is the honest answer and lets
         # every caller's own emptiness guard fire.
-        return np.zeros(h.shape, dtype=bool)
+        return np.zeros(hsv.shape[:2], np.uint8)
     peak = lo + int(np.argmax(band))
-    return (np.abs(h.astype(np.int16) - peak) <= HUE_HALFWIDTH) & (s > 70) & (v > 70)
+    return cv2.inRange(hsv, (peak - HUE_HALFWIDTH, 71, 71),
+                            (peak + HUE_HALFWIDTH, 255, 255))
 
 
 def _surface(turf: np.ndarray) -> np.ndarray:
@@ -153,7 +171,8 @@ def _surface(turf: np.ndarray) -> np.ndarray:
     """
     import cv2
 
-    filled = cv2.morphologyEx(turf.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((45, 45), np.uint8))
+    filled = cv2.morphologyEx(np.asarray(turf, np.uint8), cv2.MORPH_CLOSE,
+                              np.ones((45, 45), np.uint8))
     count, labels, stats, _ = cv2.connectedComponentsWithStats(filled, 8)
     if count < 2:
         return filled
@@ -314,61 +333,85 @@ def ridge_map(bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     Split out so a search over thresholds pays for the ridge once instead of once per candidate.
 
-    The arithmetic is unchanged and the output is bit-for-bit what the shift-based version returned;
-    what changed is that it stopped allocating. Twelve scale-and-direction combinations each built
-    four fresh full-frame arrays — 24 allocations of 2 Mpx a call — where padding once and taking
-    **views** into the padded copy costs nothing and the temporaries can be reused. Measured:
-    132.5 ms to 64.1 on `broadcast`, 112.1 to 64.7 on `CRO_MOR_194948`, 111.5 to 67.2 on
-    `g14604660`.
+    **The algebra factors, and this docstring used to say it could not.** What is being computed is
 
-    Two other formulations were measured and are not here, so nobody spends the afternoon:
+        ridge = max over (scale, direction) of [ val - max(v₊, v₋) ], and -1000 where the
+                "turf on both sides" test fails for that combination
+
+    and a maximum of differences with a common left term is that term minus a minimum:
+
+        ridge = val - min over (scale, direction) of max(v₊, v₋)
+
+    with **255 standing in for a non-turf neighbour**, because 255 is the largest a value can be,
+    so `max` returns it and `min` then discards that combination — exactly what the -1000 fill was
+    for, without a mask, a temporary or a scatter. Twelve subtractions become one, twelve
+    `logical_and`s and twelve `~both` allocations and twelve boolean scatter-writes become none,
+    and the whole inner loop lives in 0..255 and so runs in **uint8** rather than int16: half the
+    bytes moved on a workload this repo measured to be memory-bound.
+
+    The raw array is **not** bit-identical. Where no combination passes the turf test the old code
+    wrote -1000 and this writes `val - 255`, which is in [-255, 0]. Every consumer thresholds at a
+    strictly positive value — `RIDGE_CONTRAST` is 16, `AUTO_COARSE` starts at 12 and its fine step
+    floors at 6, and the adaptive path clips to 0 first — so the two agree on every question
+    anyone asks, and `scripts/bench_ridge_formulations.py` checks that at eleven thresholds
+    against the old formulation rather than asserting it. Below any threshold, where they differ,
+    is where neither is evidence.
+
+    Measured, best of five over four frames a clip, against the shift-free int16 version this
+    replaced:
+
+    | clip | before | after | |
+    |---|---|---|---|
+    | `broadcast` 1920×1080 | 32.4 ms | **3.0** | 10.9× |
+    | `g11710897` 1080×1920 | 41.4 ms | **3.1** | 13.3× |
+    | `fan` 1080×608 | 6.3 ms | **0.9** | 7.3× |
+
+    The docstring this replaces put "the honest ceiling at about 2×", on the grounds that a
+    `MORPH_TOPHAT` asks one question and this asks a directional one twelve times with a turf
+    condition on each. That argues about how many QUESTIONS are asked and it is right about that:
+    the count is unchanged here. It does not argue about how many PASSES OVER THE FRAME the
+    questions cost, and that is what was 2.5× more than it needed to be, in a dtype twice as wide
+    as the data.
+
+    Two formulations measured and not here, so nobody spends the afternoon:
 
     *OpenCV morphology.* `min(v - v₊, v - v₋)` is `v - max(v₊, v₋)`, and a max over two points is a
-    dilation by a two-point structuring element; "turf on both sides" is an erosion by the same one.
-    Exactly equivalent, and it comes out the same 1.1–2.2× — because `cv2.dilate` with a 15×15
-    kernel holding two set points still walks all 225.
+    dilation by a two-point structuring element. Exactly equivalent, and it came out at the same
+    1.1–2.2× — because `cv2.dilate` with a 15×15 kernel holding two set points still walks all 225.
 
     *Sparse, over the pixels that could be paint.* The trick that made `thin` 17× faster loses here
     by **3×**: `val >= RIDGE_MIN_V` covers 62–98 % of the frame, so there is almost nothing to skip,
     and fancy indexing gives up the contiguity that makes the dense version fast.
 
-    And the ceiling is about 2×, not the 10× a single `MORPH_TOPHAT` suggests — a top-hat asks
-    "brighter than the neighbourhood" in one pass and this asks a directional question twelve times
-    with a turf condition on each. Getting more means changing what is asked, which changes the
-    evidence.
+    `val` comes back as `uint8`, not `int16`: the only questions asked of it are `val >= 95`
+    thresholds, and converting a 2 Mpx plane to widen it was a pass bought for nothing.
     """
     import cv2
 
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     turf = _turf(hsv)
     surface = _surface(turf)
-    val = hsv[..., 2].astype(np.int16)
+    val = cv2.extractChannel(hsv, 2)
 
     pad = max(RIDGE_SCALES)
     height, width = val.shape
-    # 255 outside the frame, so a pixel whose neighbour is off-picture reads as hugely darker than
-    # it and never wins the max — the same thing `_shift`'s fill did.
-    vpad = np.full((height + 2 * pad, width + 2 * pad), 255, np.int16)
-    vpad[pad:pad + height, pad:pad + width] = val
-    tpad = np.zeros((height + 2 * pad, width + 2 * pad), bool)
-    tpad[pad:pad + height, pad:pad + width] = turf
+    # 255 outside the frame AND wherever the pixel is not turf. Off-picture and off-turf are the
+    # same statement to the `min` below — "this combination is no evidence" — and one fill says
+    # both. `max(val, ~turf)` is `val` on turf and 255 off it.
+    vpad = np.full((height + 2 * pad, width + 2 * pad), 255, np.uint8)
+    vpad[pad:pad + height, pad:pad + width] = cv2.max(val, cv2.bitwise_not(turf))
 
-    ridge = np.full(val.shape, -1000, np.int16)
-    hi = np.empty(val.shape, np.int16)
-    side = np.empty(val.shape, np.int16)
-    both = np.empty(val.shape, bool)
+    acc = np.full(val.shape, 255, np.uint8)
+    hi = np.empty(val.shape, np.uint8)
     for d in RIDGE_SCALES:
         for dy, dx in ((1, 0), (0, 1), (1, 1), (1, -1)):
             def win(a, sy, sx, d=d, dy=dy, dx=dx):
                 return a[pad + sy * d * dy:pad + sy * d * dy + height,
                          pad + sx * d * dx:pad + sx * d * dx + width]
 
-            np.maximum(win(vpad, 1, 1), win(vpad, -1, -1), out=hi)
-            np.subtract(val, hi, out=side)
-            np.logical_and(win(tpad, 1, 1), win(tpad, -1, -1), out=both)
-            side[~both] = -1000
-            np.maximum(ridge, side, out=ridge)
-    return ridge, val, surface
+            cv2.max(win(vpad, 1, 1), win(vpad, -1, -1), dst=hi)
+            cv2.min(acc, hi, dst=acc)
+    return cv2.subtract(val, acc, dtype=cv2.CV_16S), val, surface
 
 
 #: How many thinning passes before giving up. A painted band is 2-14 px wide here and each pass
@@ -404,7 +447,10 @@ def thin(mask: np.ndarray, max_passes: int = THIN_MAX_PASSES) -> np.ndarray:
     this repo's own `MIN_SUPPORTING_MARKINGS` its errors are a max over two and are not a verdict —
     they are not allowed to decide this either way.
 
-    Costs about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip.
+    Costs **5.5 ms** a frame on `broadcast`, about 8 % of the paint stage. This line used to read
+    "about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip", which was the cost
+    before the sparse rewrite in the paragraph above and stayed here after it — pointing
+    optimisation attention at a function that had already been fixed.
     """
     b = np.pad((np.asarray(mask) > 0).astype(np.uint8), 1)
     if not b.any():
@@ -565,7 +611,7 @@ def painted_width_px(bgr: np.ndarray) -> float | None:
         return None
     hit = cv2.adaptiveThreshold(hsv[..., 2], 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                 cv2.THRESH_BINARY, ADAPTIVE_BLOCK, -ADAPTIVE_C)
-    cand = ((hit > 0) & (surface > 0) & (~turf)).astype(np.uint8)
+    cand = ((hit > 0) & (surface > 0) & (turf == 0)).astype(np.uint8)
     if int(cand.sum()) < 200:
         return None
     return float(np.percentile(2.0 * cv2.distanceTransform(cand, cv2.DIST_L2, 5)[cand > 0], 99))

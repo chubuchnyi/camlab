@@ -205,15 +205,36 @@ the accuracy** on `fan` — 1.69 px becomes 4.88 and five frames of thirty leave
 nothing on clips that do not zoom. `read_npz` refuses schema 1 by name; there is no compatibility
 branch, because pitch3d is being changed rather than accommodated.
 
-## Hardware
+## Hardware, and what it costs
 
 CPU only. No GPU, no neural network, no ML runtime, nothing trained, nothing downloaded.
 What that costs and what it buys: `archive/status-detail-2026-08-14.md`.
 
+The whole chain is **2.05× faster** than on 2026-08-13 over **every clip in `runs/`** — 2891 s of
+wall clock down to 1413 s across fourteen clips and 1160 frames, per clip **1.79× to 2.24×**. The
+paint stage is 34 ms a frame from 66; scoring one camera against a frame whose paint is cached is
+2.1 ms from 11.8; the chain detects each frame's paint 431 times a clip where it used to be 551
+and the floor is 300; and SIFT is described once a frame per process rather than once per call.
+
+**The camera did not move.** Not "the metric agrees" — the five camera files each chain writes were
+compared byte for byte between the two trees on all fourteen clips: **70 files, none of them one
+byte different**, and again on `g11710897` under a non-default ridge ladder. `check_paint_equivalence`
+and `check_line_errors_equivalence` say the same thing one level down, including the adaptive and
+auto thresholds and the painted width #38 derives its scales from.
+`findings/making-it-fast-again-2026-08-16.md` has the tables and the nine benches that reproduce
+them, and it **contradicts `findings/making-it-fast-2026-08-13.md` in four places**: the ~2×
+ceiling on `ridge_map` (it was 10.9×), the 7 ms camera-dependent remainder (12–13 ms, and 95 % of
+a warm score), "process parallelism, refuted" (the per-frame unit now gets 2.8× on eight workers,
+not 1.0×), and the two stages — `_turf` and `_surface` — that its account of `paint_masks` never
+named and that were 23 % of it.
+
+Read that one first if you are about to make this faster. The older doc's own target — the
+remaining 122 ms of `paint_masks` — was not where the chain's time was.
+
 ## Running it
 
 ```bash
-.venv/bin/python -m pytest                    # 89 tests, ~6 s
+.venv/bin/python -m pytest                    # 181 tests, ~12 s
 bash scripts/deploy.sh                        # ship HEAD to the box and open the tunnel
 bash scripts/tunnel.sh                        # just the tunnel, if it dropped
 bash scripts/tunnel.sh --watch                # keep it up

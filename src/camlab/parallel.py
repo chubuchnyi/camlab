@@ -22,38 +22,48 @@ This also corrects the repo's own line, which read "One core is the requirement 
 one thread against 324 ms on sixteen, which is noise". The 342 was already using ten cores inside
 OpenCV; what did not move was the Python half.
 
-**And then the part that was left did not parallelise either.** Scoring 60 frames of `broadcast`,
-each worker pinned to one OpenCV thread so nothing oversubscribes:
+**And then the part that was left did not parallelise either — and that stopped being true on
+2026-08-16.** Scoring 60 frames of `broadcast`, each worker pinned to one OpenCV thread so nothing
+oversubscribes, the August table read 16.6 s on one worker and 16.8 on eight with 7.8 cores busy:
+eight times the CPU for an identical wall clock. Re-measured with the pool created and **warmed
+before the clock starts**, with each worker timing its own CPU, and with the decode separated from
+the paint:
 
-| workers | wall | cpu | cores busy |
+| workers | decode | paint | evidence — decode + paint + k-d tree |
 |---|---|---|---|
-| 1 | 16.6 s | 19.8 s | 1.2 |
-| 2 | 15.2 s | | |
-| 4 | 16.3 s | | |
-| 8 | **16.8 s** | **130.3 s** | **7.8** |
-| 14 | 19.6 s | | |
+| 1 | 0.61 s | 3.75 s | 4.65 s |
+| 2 | 0.33 (1.86×) | 2.31 (1.62×) | 2.49 (1.87×) |
+| 4 | 0.21 (2.95×) | 1.73 (2.17×) | **1.75 (2.66×)** |
+| 6 | 0.16 (3.83×) | **1.56 (2.40×)** | 1.67 (2.79×) |
+| 8 | 0.15 (4.08×) | 1.66 | **1.65 (2.82×)** |
+| 16 | 0.18 | 1.67 | 1.77 |
 
-Eight cores genuinely busy, eight times the CPU burned, and the wall clock **identical**. That is
-memory bandwidth, not compute — and `paint_masks` confirms it directly, costing *more* per pixel as
-the picture grows because it falls out of cache:
+Three things in that the August table could not say. **The decode scales nearly linearly to four
+workers** — it is `libjpeg`, it is compute, and it was never the bandwidth-bound half; it was
+simply never measured on its own. **The paint's bandwidth wall is real and is now measured rather
+than inferred**: worker CPU for the identical work goes 3.7 s at one worker to 19.1 s at sixteen,
+which is the same code burning five times the CPU because the memory system is contended. And
+**the wall is at 2.8×, not 1.0×**, because `ridge_map` moved ~380 bytes per pixel then and moves
+~115 now.
 
-| | | |
-|---|---|---|
-| 1920×1080, 2.1 Mpx | 222 ms | 107 ms/Mpx |
-| 960×540, 0.5 Mpx | 39 ms | 76 ms/Mpx |
-| 480×270, 0.1 Mpx | 8 ms | 64 ms/Mpx |
+Two traps in measuring this, both of which this file's first attempt fell into. `spawn` starts a
+fresh interpreter per worker and each imports numpy, cv2 and scipy — about a second of CPU each,
+charged to a four-second job if the pool is created inside the stopwatch; the draft reported
+**8.9 "cores busy" on a decode**, which is nonsense, and the nonsense is what showed it. And
+`resource.getrusage(RUSAGE_CHILDREN)` counts only children that have already **exited**, so with a
+live pool it measures the previous configuration's teardown. `scripts/bench_frame_parallel.py` is
+the harness.
 
-`ridge_map` makes 24 full passes over the frame. The cores wait on RAM.
-
-**So `default_workers()` returns 2** — the measured knee, 1.14× and no waste — and the harness stays
-wired for when the ceiling lifts. It will: the ceiling is 24 passes over the frame in `ridge_map`,
-and the OpenCV primitive that answers the same question does it in one, measured at 10× there and
-20× on `thin`. Cut the traffic and this becomes compute-bound, at which point these workers scale.
+**`default_workers()` still returns 2, and deliberately.** Raising it to 4 or 6 and running the
+whole chain gives 92.7 s and 93.2 s against 94.5 — inside the noise — because `map_items` has
+exactly one caller, `verdict.judge`, and `judge` is not where the time is. The 2.8× is real and is
+not reachable from here: cashing it in means parallelising the per-frame paint loops in the four
+stage scripts, which is undone work rather than a limit.
 
 Sizing matters more than any of this. A clip here is 40–180 frames; a full match at 25 fps is
-**135 000**, which at today's 222 ms a frame is 8.3 hours for the paint alone, and real time needs
-40 ms. So the order is: fewer passes first, then cores, then — only if it is still not enough — a
-GPU, whose memory bandwidth is the thing this workload is actually short of.
+**135 000**, which at 34 ms a frame is 1.3 hours for the paint alone, and real time needs 40 ms.
+So the order is: fewer passes first, then cores, then — only if it is still not enough — a GPU,
+whose memory bandwidth is the thing this workload is actually short of.
 
 **Order matters against the cache.** `measure/residual.py` caches the paint per frame and that is a
 36.8× on any loop scoring one frame with many cameras. Parallelism divides the wall clock of what is
@@ -83,14 +93,14 @@ def default_workers() -> int:
             return max(1, int(env))
         except ValueError:
             pass
-    # Two, measured rather than chosen. Scoring 60 frames, three repeats, medians: 16.0 s on one
-    # worker, **14.0 s on two (1.14x)**, 16.1 on three, 16.9 on four, 16.8 on six. The ceiling is
-    # memory bandwidth, not cores, so past two the extra processes only queue for the same RAM.
+    # Two, and the reason changed on 2026-08-16 without the number changing. It used to be the
+    # measured knee of a workload that stopped scaling past 1.14×. That knee has moved: the
+    # per-frame unit now gets 2.66× on four workers and 2.82× on eight (table above).
     #
-    # This is expected to LIFT. The ceiling exists because `ridge_map` makes 24 full passes over
-    # the frame; replacing those with the OpenCV primitives that do the same job in one is a
-    # measured 10x on that function and 20x on `thin`, and once the traffic is cut the work becomes
-    # compute-bound and these workers start to matter. The harness is here early on purpose.
+    # It stays at 2 because raising it buys nothing HERE. `map_items` has exactly one caller —
+    # `verdict.judge` — and running the whole chain at 2, 4 and 6 workers gives 94.5, 92.7 and
+    # 93.2 s, which is inside the noise. Spending the 2.8× means parallelising the per-frame paint
+    # loops in the four stage scripts, and until that is done more workers only cost memory.
     return max(1, min(2, (os.cpu_count() or 2) - 1))
 
 
