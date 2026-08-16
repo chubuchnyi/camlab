@@ -170,11 +170,25 @@ def _straight_markings_h() -> list[tuple[int, np.ndarray, np.ndarray, int]]:
     return _STRAIGHT_H
 
 
+#: The same markings' homogeneous endpoints as one `(M, 2, 3)` array, so the whole set projects in
+#: one matmul instead of seventeen. Verified bit-for-bit against the per-marking `(2, 3) @ h.T`.
+_STRAIGHT_STACK: np.ndarray | None = None
+
+
+def _straight_homogeneous() -> np.ndarray:
+    global _STRAIGHT_STACK
+    if _STRAIGHT_STACK is None:
+        got = np.stack([homo for _k, _w, homo, _f in _straight_markings_h()])
+        got.flags.writeable = False
+        _STRAIGHT_STACK = got
+    return _STRAIGHT_STACK
+
+
 def _clear_pitch_cache() -> None:
     """Drop what `straight_markings` and `_straight_markings_h` built. For tests that move the
     pitch model, and for nothing else — the pitch does not change during a solve."""
-    global _STRAIGHT, _STRAIGHT_H
-    _STRAIGHT = _STRAIGHT_H = None
+    global _STRAIGHT, _STRAIGHT_H, _STRAIGHT_STACK
+    _STRAIGHT = _STRAIGHT_H = _STRAIGHT_STACK = None
 
 
 def _unit(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -294,34 +308,76 @@ def _rowdot(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.matmul(a[:, None, :], np.broadcast_to(b, a.shape)[:, :, None]).reshape(-1)
 
 
+def _visible_markings(h, width, height):
+    """Every straight marking projected, clipped and measured at once.
+
+    Returns `(indices into _straight_markings_h, clipped endpoints (M, 2, 2), unit direction,
+    left normal, own length along that direction, visible length)` for the markings that survive.
+
+    This was a Python loop over seventeen markings, each doing a projection, a `clip_to_image`, a
+    `_unit` and two norms — about ten numpy calls on 2-element arrays, seventeen times, on every
+    one of the ~50 evaluations an LM refit makes. `clip_to_image` stays as the readable
+    single-segment definition and as what this is checked against; Liang-Barsky vectorises because
+    its four edge tests are the same four tests for every segment, and an element that has already
+    been clipped out simply stops mattering rather than needing an early return.
+    """
+    homo = _straight_homogeneous()
+    q = homo @ h.T                                        # (M, 2, 3)
+    z = q[:, :, 2]
+    live = (np.abs(z) >= 1e-9).all(axis=1)
+    # 1.0 where the point is degenerate, so the division neither warns nor produces a NaN that
+    # would then have to be told apart from a real one. Those rows are already dead.
+    uv = q[:, :, :2] / np.where(np.abs(z) < 1e-9, 1.0, z)[:, :, None]
+    live &= np.isfinite(uv).all(axis=(1, 2))
+
+    p0, d = uv[:, 0], uv[:, 1] - uv[:, 0]
+    t0, t1 = np.zeros(len(uv)), np.ones(len(uv))
+    for p, qq in ((-d[:, 0], p0[:, 0]), (d[:, 0], width - 1 - p0[:, 0]),
+                  (-d[:, 1], p0[:, 1]), (d[:, 1], height - 1 - p0[:, 1])):
+        par = np.abs(p) < 1e-12
+        live &= ~(par & (qq < 0))                         # parallel to this edge and outside it
+        t = np.zeros(len(uv))
+        np.divide(qq, p, out=t, where=~par)
+        neg, pos = (~par) & (p < 0), (~par) & (p >= 0)
+        # The order is the algorithm: each test reads the bound BEFORE this edge updates it, and
+        # a segment takes one branch or the other, never both.
+        live &= ~(neg & (t > t1))
+        t0 = np.where(neg, np.maximum(t0, t), t0)
+        live &= ~(pos & (t < t0))
+        t1 = np.where(pos, np.minimum(t1, t), t1)
+    live &= t1 > t0
+
+    vis = np.stack([p0 + t0[:, None] * d, p0 + t1[:, None] * d], axis=1)
+    dv = vis[:, 1] - vis[:, 0]
+    # `sqrt(_rowdot(d, d))`, NOT `np.linalg.norm(d, axis=1)`: the axis form is not bit-for-bit the
+    # 1-D one this replaces. Probed over 5000 random 2-vectors.
+    vis_len = np.sqrt(_rowdot(dv, dv))
+    live &= vis_len >= 40.0
+
+    idx = np.flatnonzero(live)
+    dv, vis_len = dv[idx], vis_len[idx]
+    u = dv / (vis_len + 1e-12)[:, None]
+    nrm = np.stack([-u[:, 1], u[:, 0]], axis=1)
+    return idx, vis[idx], u, nrm, _rowdot(dv, u), vis_len
+
+
 def _candidates(uv, u, nrm, seg_pts, seg_dir, min_cos, min_overlap_px, max_offset_px):
-    """`compare_line(uv, p)` against EVERY detected segment at once, then the three gates.
+    """`compare_line(uv, p)` against every detected segment, for ONE marking.
 
-    This is `line_errors`' inner loop and it was the repo's hottest Python: 259 331 calls of
-    `compare_line` in one `shared centre` stage, each doing six dot products on 2-vectors, plus
-    `_overlap` and `_unit` under it — `np.linalg.norm` was called **1 044 965 times a stage**. The
-    arithmetic is trivial; there was simply an interpreter round trip per (marking, segment) pair
-    where the whole marking's worth of pairs is one `(N, 2)` broadcast.
-
-    `compare_line` itself is unchanged and is still the single-pair definition every other caller
-    and every test uses. This is that function written once over N segments, and the ordering is
-    the same — survivors come back in ascending segment index, as `enumerate` gave them — so
-    `_assign_in_order` sees exactly what it saw.
+    Kept as the single-marking definition and as what `_candidates_grid` is checked against; the
+    grid below is this function done for every marking at once. `compare_line` in turn is the
+    single-PAIR definition every other caller and every test uses. Three statements of the same
+    arithmetic, each one the reference for the next.
 
     **Every 2-vector dot goes through `_rowdot`, and the reason is not style.** The first version
-    of this used `(A * B).sum(axis=1)`, which is the obvious way to write a row-wise dot and is
-    **not bit-for-bit what `a @ b` returns**. The equivalence check caught it at once: offsets
-    moved by 1e-16 to 9e-14 on 12 of 14 clips. That is far below any measurement here and it still
-    matters, because `_assign_in_order` settles its alignment with `best == take` — an exact float
+    used `(A * B).sum(axis=1)`, which is the obvious way to write a row-wise dot and is **not
+    bit-for-bit what `a @ b` returns**. The equivalence check caught it at once: offsets moved by
+    1e-16 to 9e-14 on 12 of 14 clips. That is far below any measurement here and it still matters,
+    because `_assign_in_order` settles its alignment with `best == take` — an exact float
     comparison — so a last-bit difference can hand a marking a different segment.
-
-    Returns the same tuples the loop appended: `(segment index, offset, angle, overlap, point on
-    model, point on found, the segment)`. The three scalars are converted back to Python floats
-    rather than left as `np.float64`, because they end up in `LineError` and from there in JSON.
     """
     if not len(seg_pts):
         return []
-    # 1. the angle gate, over all segments at once. Everything after it works on the survivors.
     cos_all = _rowdot(seg_dir, u)
     passes = np.abs(cos_all) >= min_cos
     if not passes.any():
@@ -329,30 +385,88 @@ def _candidates(uv, u, nrm, seg_pts, seg_dir, min_cos, min_overlap_px, max_offse
     idx = np.flatnonzero(passes)
     found, vdir, cos = seg_pts[idx], seg_dir[idx], cos_all[idx]
 
-    # 2. `_overlap`: each segment's extent projected onto the model's direction, clipped to it.
-    #    `(M, 2, 2) @ u` is a stack of the same matrix-vector product the scalar version does, and
-    #    agrees with it exactly — it is only the ROW-WISE dot of 1-D vectors that does not.
     span = float((uv[1] - uv[0]) @ u)
     t_found = np.sort((found - uv[0]) @ u, axis=1)
     lo = np.maximum(0.0, t_found[:, 0])
     hi = np.minimum(span, t_found[:, 1])
     length = np.maximum(0.0, hi - lo)
 
-    # 3. `compare_line`: the offset at the middle of the overlap, perpendicular to the model.
     t_mid = np.where(length > 0, (lo + hi) / 2.0, span / 2.0)
     p_model = uv[0] + t_mid[:, None] * u
-    # same sense as the model, so the angle is not 180-ambiguous
     v = np.where((cos < 0)[:, None], -vdir, vdir)
     t = _rowdot(p_model - found[:, 0], v)
     p_found = found[:, 0] + t[:, None] * v
     offset = _rowdot(p_found - p_model, nrm)
     angle = np.degrees(np.arctan2(v[:, 0] * u[1] - v[:, 1] * u[0], _rowdot(v, u)))
 
-    # 4. the overlap and offset gates.
     keep = (length >= min_overlap_px) & (np.abs(offset) <= max_offset_px)
     return [(int(idx[j]), float(offset[j]), float(angle[j]), float(length[j]),
              p_model[j], p_found[j], found[j])
             for j in np.flatnonzero(keep)]
+
+
+def _candidates_grid(uv, u, nrm, span, gate_px, seg_pts, seg_dir, min_cos, max_offset_px):
+    """`_candidates` for EVERY visible marking at once — one dispatch instead of seventeen.
+
+    The arrays are per marking: `uv` the clipped endpoints `(M, 2, 2)`, `u` its unit direction
+    `(M, 2)`, `nrm` its left normal, `span` its own length along `u`, `gate_px` the overlap a
+    candidate must clear. Returns a list of `M` candidate lists, in the order `_candidates` gave
+    them — ascending segment index — so `_assign_in_order` sees exactly what it saw.
+
+    **Measured before it was written, which is the only reason it exists.** `_candidates` costs
+    5.8 us for one marking and 97.9 us for the seventeen a frame has; the identical arithmetic over
+    seventeen times the segments in ONE call costs 7.1 us. **93 % of it was interpreter dispatch**,
+    and the ceiling was 13.9x. That is the same disease as `_across_on_normal`'s 322 trips over
+    2.3 KB, one level up: the arrays here are `(17, 12)` and fit in L1 twice over, so nothing is
+    being computed faster — it is being asked for once instead of seventeen times.
+
+    It is NOT the same conclusion as vectorising over segments alone, which is measured in
+    `making-it-fast-again-2026-08-16.md` §5 to be a wash below ten segments a frame. The marking
+    count is fixed by the pitch model at seventeen and does not depend on the clip, the detector or
+    the threshold, so this multiplier is a property of the geometry rather than of the data.
+
+    Two traps in writing it, both probed against the scalar form before a line was changed:
+    `np.linalg.norm(d, axis=1)` is **not** bit-for-bit the 1-D `np.linalg.norm(d)` — use
+    `sqrt(_rowdot(d, d))` — and a flattened `_rowdot` does **not** reproduce a matrix-vector
+    product — use `np.matmul(F, U[..., None])`, which does, exactly.
+    """
+    m, n = len(uv), len(seg_pts)
+    if not m or not n:
+        return [[] for _ in range(m)]
+
+    # (M, N, ...) — every marking against every segment. `np.broadcast_to` gives views; only the
+    # results are materialised.
+    seg_g = np.broadcast_to(seg_dir, (m, n, 2))
+    u_g = np.broadcast_to(u[:, None, :], (m, n, 2))
+    cos = _rowdot(seg_g.reshape(-1, 2), u_g.reshape(-1, 2)).reshape(m, n)
+
+    # `_overlap`: each segment's extent projected onto the marking's direction, clipped to it.
+    delta = seg_pts[None, :, :, :] - uv[:, None, 0, None, :]          # (M, N, 2, 2)
+    t_found = np.sort(np.matmul(delta, u[:, None, :, None])[..., 0], axis=2)
+    lo = np.maximum(0.0, t_found[:, :, 0])
+    hi = np.minimum(span[:, None], t_found[:, :, 1])
+    length = np.maximum(0.0, hi - lo)
+
+    # `compare_line`: the offset at the middle of the overlap, perpendicular to the marking.
+    t_mid = np.where(length > 0, (lo + hi) / 2.0, (span / 2.0)[:, None])
+    p_model = uv[:, None, 0, :] + t_mid[..., None] * u[:, None, :]
+    v = np.where((cos < 0)[..., None], -seg_g, seg_g)
+    found0 = np.broadcast_to(seg_pts[None, :, 0, :], (m, n, 2))
+    t = _rowdot((p_model - found0).reshape(-1, 2), v.reshape(-1, 2)).reshape(m, n)
+    p_found = found0 + t[..., None] * v
+    offset = _rowdot((p_found - p_model).reshape(-1, 2),
+                     np.broadcast_to(nrm[:, None, :], (m, n, 2)).reshape(-1, 2)).reshape(m, n)
+    vu = _rowdot(v.reshape(-1, 2), u_g.reshape(-1, 2)).reshape(m, n)
+    angle = np.degrees(np.arctan2(v[:, :, 0] * u[:, None, 1] - v[:, :, 1] * u[:, None, 0], vu))
+
+    keep = ((np.abs(cos) >= min_cos) & (length >= gate_px[:, None])
+            & (np.abs(offset) <= max_offset_px))
+    rows, cols = np.nonzero(keep)
+    out: list[list] = [[] for _ in range(m)]
+    for r, c in zip(rows, cols, strict=True):
+        out[r].append((int(c), float(offset[r, c]), float(angle[r, c]), float(length[r, c]),
+                       p_model[r, c], p_found[r, c], seg_pts[c]))
+    return out
 
 
 def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, height: int,
@@ -389,32 +503,19 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
     # inside it, and it was costing a `radians` and a `cos` on all 141 000 comparisons a stage.
     min_cos = float(np.cos(np.radians(match_angle_deg)))
 
-    model: list = []
-    for k, _world, world_h, family in _straight_markings_h():
-        q = world_h @ h.T
-        if np.any(np.abs(q[:, 2]) < 1e-9):
-            continue
-        uv = q[:, :2] / q[:, 2, None]
-        if not np.isfinite(uv).all():
-            continue
-        # Clipped to the image, and everything below uses the clipped segment. This replaces a
-        # "both ends within twice the frame" test that threw away every marking running toward the
-        # horizon — the ones with the most pixels on screen — and it fixes the overlap denominator
-        # at the same time, since both faults were the same mistake: treating the projected length
-        # as the measurable length.
-        vis = clip_to_image(uv, width, height)
-        if vis is None:
-            continue
-        vis_len = float(np.linalg.norm(vis[1] - vis[0]))
-        if vis_len < 40.0:
-            continue
-        uv = vis
-
-        u = _unit(uv[0], uv[1])
-        nrm_u = np.array([-u[1], u[0]])
-        cands = _candidates(uv, u, nrm_u, seg_pts, seg_dir, min_cos,
-                            min_overlap * vis_len, max_offset_px)
-        model.append((k, uv, u, cands, family))
+    # Every marking projected, clipped and measured in one pass, then every (marking, segment)
+    # pair in one more. This was two nested Python loops — seventeen markings, each compared with
+    # every segment — issuing a few hundred numpy calls on 2-element arrays per evaluation, and an
+    # LM refit makes about fifty evaluations a frame. Clipping keeps the whole visible extent and
+    # everything below measures against THAT, which replaced a "both ends within twice the frame"
+    # test that threw away every marking running toward the horizon — the ones with the most pixels
+    # on screen — and fixed the overlap denominator at the same time, both faults being the same
+    # mistake: treating the projected length as the measurable length.
+    idx, uv, u, nrm, span, vis_len = _visible_markings(h, width, height)
+    cands = _candidates_grid(uv, u, nrm, span, min_overlap * vis_len,
+                             seg_pts, seg_dir, min_cos, max_offset_px)
+    marks = _straight_markings_h()
+    model = [(marks[i][0], uv[j], u[j], cands[j], marks[i][3]) for j, i in enumerate(idx)]
 
     return _assign_in_order(model, seg_pts)
 
