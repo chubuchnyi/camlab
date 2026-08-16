@@ -104,26 +104,47 @@ def world_family(world: np.ndarray, tol_deg: float = 5.0) -> int:
     return 0 if min(ang, 180.0 - ang) < 45.0 else 1
 
 
+#: `straight_markings`' answer, built on first use. A module global rather than `functools.cache`
+#: so that a test which changes the pitch model can clear it by name.
+_STRAIGHT: list[tuple[int, np.ndarray]] | None = None
+
+
 def straight_markings() -> list[tuple[int, np.ndarray]]:
     """`(index, (2, 2) world endpoints)` for every marking that is straight in the world.
 
     Circles and arcs are excluded: they have no single direction, so "the angle between them"
     is not defined, and they cannot belong to a parallel family.
+
+    **Built once.** It takes no arguments and reads only the pitch constants, so every call
+    returned the identical list — and it rebuilt all 23 polylines to do it, arcs sampled with
+    `linspace` and all. `line_errors` calls it once per evaluation and an LM refit issues about
+    105 of those per frame: measured on `broadcast`, 6300 calls costing **5.1 s of a 42.7 s carry
+    stage**, 12 %, for an answer that cannot change.
+
+    The endpoints come back **read-only**. Handing out a shared mutable array is how a cache turns
+    one caller's scratch edit into every later caller's wrong answer, and this repo has the
+    equivalent already written down for run directories. Nothing here mutates them today; the flag
+    is so that the day something does, it says so instead of quietly changing the metric.
     """
-    out = []
-    for k, poly in enumerate(pitch_polylines()):
-        xy = np.asarray(poly, dtype=float)[:, :2]
-        if len(xy) < 2:
-            continue
-        d = xy[-1] - xy[0]
-        n = float(np.linalg.norm(d))
-        if n < 1e-9:
-            continue
-        perp = np.abs((xy - xy[0]) @ np.array([-d[1], d[0]]) / n)
-        if perp.max() > 0.05:                       # 5 cm off straight: an arc, not a line
-            continue
-        out.append((k, xy[[0, -1]]))
-    return out
+    global _STRAIGHT
+    if _STRAIGHT is None:
+        out = []
+        for k, poly in enumerate(pitch_polylines()):
+            xy = np.asarray(poly, dtype=float)[:, :2]
+            if len(xy) < 2:
+                continue
+            d = xy[-1] - xy[0]
+            n = float(np.linalg.norm(d))
+            if n < 1e-9:
+                continue
+            perp = np.abs((xy - xy[0]) @ np.array([-d[1], d[0]]) / n)
+            if perp.max() > 0.05:                   # 5 cm off straight: an arc, not a line
+                continue
+            ends = xy[[0, -1]]
+            ends.flags.writeable = False
+            out.append((k, ends))
+        _STRAIGHT = out
+    return _STRAIGHT
 
 
 def _unit(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -225,9 +246,18 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
     cy = height / 2.0 if cy is None else cy
     h = world_to_image(focal, rvec, centre, width, height, cx=cx, cy=cy)
 
+    # One `(N, 2, 2)` array viewed as a list of endpoints, and the directions in one vectorised
+    # pass, rather than two Python loops building N small arrays each. Identical values — a
+    # 2-vector's norm is the same two multiplies and one add either way — and `line_errors` is
+    # called about 105 times per frame by one LM refit, always on the SAME segments.
     segments = np.asarray(segments, dtype=float).reshape(-1, 4)
-    seg_pts = [np.array([[s[0], s[1]], [s[2], s[3]]]) for s in segments]
-    seg_dir = [_unit(p[0], p[1]) for p in seg_pts]
+    pts = segments.reshape(-1, 2, 2)
+    delta = pts[:, 1] - pts[:, 0]
+    seg_pts = list(pts)
+    seg_dir = list(delta / (np.linalg.norm(delta, axis=1) + 1e-12)[:, None])
+    # Hoisted out of the per-marking, per-segment loop it used to sit in: it depends on nothing
+    # inside it, and it was costing a `radians` and a `cos` on all 141 000 comparisons a stage.
+    min_cos = float(np.cos(np.radians(match_angle_deg)))
 
     model: list = []
     for k, world in straight_markings():
@@ -253,7 +283,7 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
         u = _unit(uv[0], uv[1])
         cands = []
         for si, (p, v) in enumerate(zip(seg_pts, seg_dir, strict=True)):
-            if abs(float(v @ u)) < np.cos(np.radians(match_angle_deg)):
+            if abs(float(v @ u)) < min_cos:
                 continue
             off, ang, ov, p1, p2 = compare_line(uv, p)
             if ov < min_overlap * vis_len:
