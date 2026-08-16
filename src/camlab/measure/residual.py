@@ -433,33 +433,56 @@ def _across_on_normal(sub: np.ndarray, normal: np.ndarray, dist: np.ndarray,
 
     *First minimum, not the smallest one.* Over a 40 px search a marking whose own paint is missing
     would otherwise snap onto the neighbouring marking and report that distance as its own.
+
+    **The walk is over `t`, not a loop over `t`.** This was 161 Python trips per direction, each
+    issuing about fourteen numpy calls over a 300-element array — 2.3 KB of data through the
+    interpreter, 322 times. It cost **14.3 ms of a 15.0 ms warm `frame_residual`**, which is 95 %
+    of everything that depends on the camera, and it is the half no amount of paint caching can
+    remove because it is the half that changes when the camera does.
+
+    All the ray positions are built at once, sampled at once, and the state machine is expressed as
+    two scans:
+
+        `low`  is `np.minimum.accumulate` over `t` — the running minimum IS a cumulative minimum
+        `done` fires at the first `t` where the walk has come within tolerance and has started
+               rising again, which is `argmax` over a boolean
+
+    and `at`, the offset the running minimum was reached at, is the first `t` where the running
+    minimum attains its stopping value — again an `argmax`, because a cumulative minimum is
+    non-increasing. The arithmetic per element is unchanged, in the same dtype and the same order,
+    so the answer is **bit-for-bit** what the loop returned; `tests/test_across_on_normal.py`
+    pins that against the loop it replaced on real frames and on adversarial synthetic rays.
+
+    The old loop's `if done.all(): break` never fired on a real frame — some sample always fails
+    to find paint — so it bought nothing and is not missed.
     """
     h, w = dist.shape
+    n = len(sub)
+    if n == 0:
+        return np.empty(0), np.zeros(0, dtype=bool)
+    ts = np.arange(0.0, limit + step, step)
 
-    def sample(p: np.ndarray) -> np.ndarray:
-        x = np.clip(p[:, 0], 0.0, w - 1.001)
-        y = np.clip(p[:, 1], 0.0, h - 1.001)
-        x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+    def one_way(direction: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # (T, n): every sample's ray, at every offset, at once.
+        x = np.clip(sub[None, :, 0] + ts[:, None] * direction[None, :, 0], 0.0, w - 1.001)
+        y = np.clip(sub[None, :, 1] + ts[:, None] * direction[None, :, 1], 0.0, h - 1.001)
+        x0 = np.floor(x).astype(np.intp)
+        y0 = np.floor(y).astype(np.intp)
         fx, fy = x - x0, y - y0
         top = dist[y0, x0] * (1 - fx) + dist[y0, x0 + 1] * fx
         bot = dist[y0 + 1, x0] * (1 - fx) + dist[y0 + 1, x0 + 1] * fx
-        return top * (1 - fy) + bot * fy
+        here = top * (1 - fy) + bot * fy
 
-    def one_way(direction: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        n = len(sub)
-        low = np.full(n, np.inf)          # smallest `dist` seen so far
-        at = np.full(n, np.inf)           # the offset it was seen at
-        done = np.zeros(n, dtype=bool)
-        for t in np.arange(0.0, limit + step, step):
-            here = sample(sub + t * direction)
-            nearer = ~done & (here < low)
-            low[nearer], at[nearer] = here[nearer], t
-            # Past the crossing: it came within tolerance and is now moving away again. Stopping
-            # at the FIRST such minimum rather than the smallest over the whole ray is what keeps
-            # a marking whose own paint is missing from snapping onto the next marking along.
-            done |= ~done & (low <= CROSSING_TOL) & (here > low + 1e-6)
-            if done.all():
-                break
+        running = np.minimum.accumulate(here, axis=0)
+        # Past the crossing: it came within tolerance and is now moving away again. Stopping at the
+        # FIRST such minimum rather than the smallest over the whole ray is what keeps a marking
+        # whose own paint is missing from snapping onto the next marking along.
+        stop = (here > running + 1e-6) & (running <= CROSSING_TOL)
+        last = np.where(stop.any(axis=0), stop.argmax(axis=0), len(ts) - 1)
+        low = running[last, np.arange(n)]
+        # `running` is non-increasing in `t`, so the first offset at which it reaches its final
+        # value is the offset the minimum was found at — the loop's `at`, without carrying it.
+        at = ts[(running <= low[None, :]).argmax(axis=0)]
         # `at` is how far the walk went; `low` is what was still left when it turned around. Their
         # sum is the offset in both cases and that is why it is not two branches: where the ray
         # crossed the centreline `low` is ~0 and the answer is where the crossing was, and where it
