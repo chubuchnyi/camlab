@@ -27,13 +27,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import cv2  # noqa: E402
 
 from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
-from camlab.measure.paint import paint_masks  # noqa: E402
 from camlab.measure.pixel_motion import measure_pairs  # noqa: E402
-from camlab.measure.residual import frame_residual  # noqa: E402
+from camlab.measure.residual import frame_evidence_cached, frame_residual  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.carry import carry  # noqa: E402
 from camlab.solve.hand import hand_candidates  # noqa: E402
@@ -145,9 +143,28 @@ def main() -> None:
     print("   refit: " + ("Nelder-Mead on the scalar objective" if args.nelder_mead
                           else "Levenberg-Marquardt on the endpoint residuals"))
 
+    # Through the evidence cache, not around it. This called `paint_masks` directly, so the paint
+    # it detected was invisible to `frame_residual`, which then detected the same pixels again for
+    # the same frame — 120 `paint_masks` on a 60-frame clip where 60 is the information content.
     def segs(i):
-        d, s = paint_masks(cv2.imread(str(info.frame_path(i))))
+        d, s = frame_evidence_cached(info.frame_path(i))[:2]
         return detect_segments(d, s, method="hough")
+
+    # A frame's before/after pair, taken the moment that frame is FINAL. It used to be a separate
+    # sweep over the whole clip after the carry finished, and `EVIDENCE_CACHE` holds four frames,
+    # so by then every frame's paint had been evicted and was detected a second time. Every frame
+    # is assigned exactly once — anchors in the loop below, the rest in the carry loop, and the
+    # `bounds` are disjoint — so taking the pair at that moment is the same number, one paint
+    # earlier.
+    before_of: dict[int, float] = {}
+    after_of: dict[int, float] = {}
+
+    def sweep(k: int) -> None:
+        before_of[k] = frame_residual(info.frame_path(k), seed["focal_px"][k],
+                                      seed["rotation"][k], seed["position"][k],
+                                      frame=k, cx=cx, cy=cy).worst_line_px
+        after_of[k] = frame_residual(info.frame_path(k), focal[k], rot[k], pos[k],
+                                     frame=k, cx=cx, cy=cy).worst_line_px
 
     focal = np.array(seed["focal_px"], float).copy()
     rot = np.array(seed["rotation"], float).copy()
@@ -172,6 +189,7 @@ def main() -> None:
                     free_position=args.free_position)
             focal[a], rot[a], pos[a] = r.focal_px, r.rotation, r.position
         drift[a] = 0
+        sweep(a)
 
     bounds = []
     for idx, a in enumerate(anchors):
@@ -204,16 +222,17 @@ def main() -> None:
                         free_position=args.free_position)
                 focal[j], rot[j], pos[j] = r.focal_px, r.rotation, r.position
                 drift[j] = abs(j - a)
+                sweep(j)
                 i = j
         print(f"      anchor {a}: frames {lo}..{hi} done", flush=True)
 
-    before, after = [], []
-    for i in range(n):
-        before.append(frame_residual(info.frame_path(i), seed["focal_px"][i], seed["rotation"][i],
-                                     seed["position"][i], frame=i, cx=cx, cy=cy).worst_line_px)
-        after.append(frame_residual(info.frame_path(i), focal[i], rot[i], pos[i],
-                                    frame=i, cx=cx, cy=cy).worst_line_px)
-    b, a = np.array(before), np.array(after)
+    # Anything an anchor's range did not reach — there should be none, and if the bounds ever stop
+    # covering the clip this catches it instead of a KeyError three lines down.
+    for k in range(n):
+        if k not in before_of:
+            sweep(k)
+    b = np.array([before_of[k] for k in range(n)])
+    a = np.array([after_of[k] for k in range(n)])
 
     out = write_camera(
         info.dir / args.out, model=f"{seed['model']}+pixel_carry", clip_id=info.clip_id,

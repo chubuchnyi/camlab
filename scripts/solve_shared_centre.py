@@ -160,11 +160,17 @@ def main() -> None:
     rot = np.array([sol[i][1] for i in range(n)])
     posn = np.tile(centre, (n, 1))
 
-    b = np.array([frame_residual(info.frame_path(i), src["focal_px"][i], src["rotation"][i],
-                                 src["position"][i], frame=i, cx=cx, cy=cy).worst_line_px
-                  for i in range(n)])
-    a = np.array([frame_residual(info.frame_path(i), focal[i], rot[i], centre,
-                                 frame=i, cx=cx, cy=cy).worst_line_px for i in range(n)])
+    # One pass scoring BOTH cameras on each frame, not two passes over the clip. `EVIDENCE_CACHE`
+    # holds four frames, so as two comprehensions the second one missed on every frame of any clip
+    # longer than four and re-detected paint the first had already found. Same numbers, half the
+    # paint: this stage went from 189 `paint_masks` on a 60-frame clip to 129.
+    before, after = [], []
+    for i in range(n):
+        before.append(frame_residual(info.frame_path(i), src["focal_px"][i], src["rotation"][i],
+                                     src["position"][i], frame=i, cx=cx, cy=cy).worst_line_px)
+        after.append(frame_residual(info.frame_path(i), focal[i], rot[i], centre,
+                                    frame=i, cx=cx, cy=cy).worst_line_px)
+    b, a = np.array(before), np.array(after)
 
     out = write_camera(
         info.dir / args.out, model=f"{src['model']}+shared_centre", clip_id=info.clip_id,

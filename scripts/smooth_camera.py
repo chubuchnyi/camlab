@@ -97,11 +97,27 @@ def main() -> None:
         spot = max((v[2] for v in r.per_line.values() if v[1] >= 8), default=float("nan"))
         return r.worst_line_px, float(spot), r.n
 
+    # Both cameras scored on the SAME frame, back to back. These used to be two full passes over
+    # the clip — the current camera, then the smoothed one — and `residual.EVIDENCE_CACHE` holds
+    # four frames, so on any clip longer than four the second pass missed on every frame and
+    # re-detected paint the first pass had already found: **120 `paint_masks` for 60 frames**.
+    # Scoring them adjacent makes the second one a cache hit and halves the stage's paint.
+    #
+    # The DECISION cannot move up here with them, because `floor` is a median over all frames'
+    # marking counts and is not known until this loop has finished. That is why the loop below
+    # stayed, and it does no scoring at all now.
     w0 = np.empty(n)
     sp0 = np.empty(n)
     ns0 = np.empty(n, int)
+    pw = np.empty(n)
+    psp = np.empty(n)
+    pns = np.empty(n, int)
+    prop_rv = np.empty((n, 3), float)
     for i in range(n):
         w0[i], sp0[i], ns0[i] = score(i, focal[i], rvec[i])
+        prop_rv[i] = rodrigues_from_matrix(rotation_from_angles(
+            prop["yaw"][i], prop["elev"][i], prop["roll"][i]))
+        pw[i], psp[i], pns[i] = score(i, prop["focal"][i], prop_rv[i])
 
     print(f"== {args.clip}: {n} frames from {args.src}")
     print("   how much each parameter moves frame to frame, before -> after the median filter:")
@@ -116,10 +132,8 @@ def main() -> None:
     taken = 0
     floor = 0.7 * float(np.median(ns0))
     for i in range(n):
-        f = prop["focal"][i]
-        rv = rodrigues_from_matrix(rotation_from_angles(prop["yaw"][i], prop["elev"][i],
-                                                        prop["roll"][i]))
-        nw, nsp, nn = score(i, f, rv)
+        f, rv = prop["focal"][i], prop_rv[i]
+        nw, nsp, nn = pw[i], psp[i], pns[i]
         if not np.isfinite(nw) or nn < floor:
             continue
         # Better on BOTH numbers, not one. A smoothed frame that improves the middle of a marking
