@@ -95,6 +95,37 @@ def test_it_holds_where_every_sample_is_already_on_the_paint():
           loop_version(sub, normal, dist, 40.0))
 
 
+@pytest.mark.parametrize("first,cap", [(1, 1), (2, 4), (4, 128), (7, 13), (400, 400)])
+def test_the_block_size_is_not_part_of_the_answer(first, cap):
+    """The walk samples `t` in geometrically growing blocks and drops finished samples.
+
+    That is a scheduling decision and it must be invisible: `(1, 1)` checks every offset one at a
+    time, `(400, 400)` does the whole 161 in one block with no compaction at all, and everything
+    between has to give the same floats. A blocking bug — a carried minimum lost at a boundary, an
+    `at` attributed to the wrong block — shows up here and can hide from a single fixed size.
+    """
+    from camlab.measure import residual as R
+
+    rng = np.random.default_rng(11)
+    h, w = 200, 260
+    yy = np.arange(h)[:, None] * np.ones(w)
+    stripes = np.minimum.reduce([np.abs(yy - r) for r in (18, 63, 121, 178)]).astype(np.float32)
+    stripes[80:120, 30:150] = 60.0                    # a hole, so some rays never find paint
+
+    n = 250
+    sub = np.column_stack([rng.uniform(2, w - 3, n), rng.uniform(2, h - 3, n)])
+    ang = rng.uniform(0, 2 * np.pi, n)
+    normal = np.column_stack([np.cos(ang), np.sin(ang)])
+
+    want = loop_version(sub, normal, stripes, 40.0)
+    old = (R.FIRST_WALK_BLOCK, R.MAX_WALK_BLOCK)
+    try:
+        R.FIRST_WALK_BLOCK, R.MAX_WALK_BLOCK = first, cap
+        _same(R._across_on_normal(sub, normal, stripes, 40.0), want)
+    finally:
+        R.FIRST_WALK_BLOCK, R.MAX_WALK_BLOCK = old
+
+
 def test_an_empty_sample_set_returns_empty_rather_than_raising():
     dist = np.zeros((10, 10), np.float32)
     across, found = _across_on_normal(np.zeros((0, 2)), np.zeros((0, 2)), dist, 40.0)

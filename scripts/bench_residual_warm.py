@@ -21,8 +21,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
-
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE / "src"))
 RUNS = HERE / "runs"
@@ -79,20 +77,32 @@ def main() -> int:
             got = R.frame_residual(path, **kw2)
             warm = min(warm, time.perf_counter() - t)
 
-        # the walk on its own, at the sizes the real call uses
+        # The walk on its own, with the arguments the REAL call passed it. An earlier draft fed it
+        # random points on the surface with random directions, which is a much harder distribution
+        # than a solve ever meets — real normals point across real markings, so most rays find
+        # their paint in the first pixel — and once the walk gained an early exit that synthetic
+        # set reported it as costing MORE than the whole score it is part of. An instrument that
+        # invents its own input measures the input.
+        seen: dict = {}
+        real = R._across_on_normal
+
+        def capture(sub, normal, dist, limit, step=0.25, _seen=seen, _real=real):
+            _seen.setdefault("args", (sub.copy(), normal.copy(), dist, limit, step))
+            return _real(sub, normal, dist, limit, step)
+
+        R._across_on_normal = capture
+        try:
+            R.frame_residual(path, **kw)
+        finally:
+            R._across_on_normal = real
         dist, surface, spine, tree, w, h, scale = R.frame_evidence_cached(path)
-        rng = np.random.default_rng(0)
-        n = max(1, got.n)
-        ys, xs = np.nonzero(surface > 0)
-        take = rng.choice(len(xs), size=min(n, len(xs)), replace=False)
-        sub = np.column_stack([xs[take], ys[take]]).astype(float)
-        ang = rng.uniform(0, 2 * np.pi, len(sub))
-        normal = np.column_stack([np.cos(ang), np.sin(ang)])
         walk = 1e9
-        for _ in range(args.repeat):
-            t = time.perf_counter()
-            R._across_on_normal(sub, normal, dist, 40.0)
-            walk = min(walk, time.perf_counter() - t)
+        if "args" in seen:
+            a = seen["args"]
+            for _ in range(args.repeat):
+                t = time.perf_counter()
+                real(*a)
+                walk = min(walk, time.perf_counter() - t)
 
         print(f"\n{clip}  {w}x{h}  {name} frame {idx}  {got.n} samples, "
               f"{len(got.per_line)} markings")
