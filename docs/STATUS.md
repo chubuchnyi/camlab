@@ -210,10 +210,11 @@ branch, because pitch3d is being changed rather than accommodated.
 CPU only. No GPU, no neural network, no ML runtime, nothing trained, nothing downloaded.
 What that costs and what it buys: `archive/status-detail-2026-08-14.md`.
 
-The whole chain is **1.69× faster** than on 2026-08-13 over **every clip in `runs/`** — 2928 s of
-wall clock down to 1728 s across fourteen clips and 1160 frames, per clip 1.30× to 1.83×. The
-paint stage is 34 ms a frame from 66, and scoring one camera against a frame whose paint is cached
-is 2.1 ms from 11.8.
+The whole chain is **2.05× faster** than on 2026-08-13 over **every clip in `runs/`** — 2891 s of
+wall clock down to 1413 s across fourteen clips and 1160 frames, per clip **1.79× to 2.24×**. The
+paint stage is 34 ms a frame from 66; scoring one camera against a frame whose paint is cached is
+2.1 ms from 11.8; the chain detects each frame's paint 431 times a clip where it used to be 551
+and the floor is 300; and SIFT is described once a frame per process rather than once per call.
 
 **The camera did not move.** Not "the metric agrees" — the five camera files each chain writes were
 compared byte for byte between the two trees on all fourteen clips: **70 files, none of them one

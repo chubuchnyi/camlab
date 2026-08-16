@@ -1,40 +1,55 @@
-# Making it fast again: the chain is 1.3–1.8× and four of the last day's conclusions were wrong
+# Making it fast again: the chain is 2.05× and four of the last day's conclusions were wrong
 
 Measured 2026-08-16 on the same laptop (i7-11850H, 16 threads, no GPU), against
 `docs/findings/making-it-fast-2026-08-13.md`, which is the only performance work this repo had
 done and which this doc contradicts in four places.
 
-**The headline.** Three clips, every stage, base commit `066b7a9` against this branch, **all six
-runs taken in one sitting** — see the warning about that below, which cost this document its first
-set of numbers:
+**The headline: every clip in `runs/` — fourteen of them, 1160 frames — goes 2891 s to 1413 s,
+2.05×, per clip 1.79× to 2.24×, and every camera file it writes is byte for byte the one that was
+there before.** The table is below; read the warning about measurement sessions with it, because
+it cost this document its first set of numbers.
+
+Per-stage, on `broadcast`, all in one sitting:
 
 | clip | frames × size | segments/frame | before | now | |
 |---|---|---|---|---|---|
-| `broadcast` | 60 × 1920×1080 | 9 | 119.7 s | **70.6 s** | 1.70× |
-| `CRO_MOR_194948` | 120 × 1920×1080 | 12 | 278.8 s | **156.5 s** | 1.78× |
-| `fan` | 120 × 1080×608 | 7 | 188.6 s | **142.0 s** | 1.33× |
+| `broadcast` | 60 × 1920×1080 | 9 | 118.6 s | **62.1 s** | 1.91× |
+| `CRO_MOR_194948` | 120 × 1920×1080 | 12 | 273.4 s | **135.2 s** | 2.02× |
+| `fan` | 120 × 1080×608 | 7 | 189.9 s | **88.2 s** | 2.15× |
 
 **Then every clip in `runs/`, and the camera files compared BYTE FOR BYTE.** Not "the metric
 agrees" — the five JSON files each chain writes, `cmp`'d. If the bytes are the same the accuracy
-cannot have moved, and nothing weaker was going to settle it:
+cannot have moved, and nothing weaker was going to settle it. Run twice: once after §1–§5, and
+again after the two cache repairs in §7 and §8.
 
-| clip | frames | seed | before | now | | camera files |
-|---|---|---|---|---|---|---|
-| `14604731_1080_1920_30fps` | 120 | `camera_start` | 260.7 s | 149.4 s | 1.74× | 5/5 identical |
-| `14604731_..._Copy` | 180 | `camera_start` | 437.4 | 245.7 | 1.78× | 5/5 identical |
-| `broadcast` | 60 | `camera_seed_used` | 121.0 | 71.2 | 1.70× | 5/5 identical |
-| `CRO_MOR_194948` | 120 | `camera_seed_used` | 281.8 | 154.1 | 1.83× | 5/5 identical |
-| `demo_14604680` | 60 | `camera_start` | 44.2 | 27.3 | 1.62× | 5/5 identical |
-| `ENG_FRA_232015` | 180 | `camera_seed_used` | 688.6 | 379.0 | 1.82× | 5/5 identical |
-| `fan` | 120 | `camera_boot` | 189.6 | 143.8 | 1.32× | 5/5 identical |
-| `g11710897` | 40 | `camera_seed_used` | 113.7 | 65.1 | 1.75× | 5/5 identical |
-| `g14604660` | 40 | `camera_seed_used` | 80.0 | 49.3 | 1.62× | 5/5 identical |
-| `g15449383` | 40 | `camera_seed_used` | 140.6 | 108.0 | 1.30× | 5/5 identical |
-| `MOR_POR_181952` | 60 | `camera_start` | 94.0 | 60.8 | 1.55× | 5/5 identical |
-| `NET_ARG_225042` | 60 | `camera_start` | 138.7 | 79.4 | 1.75× | 5/5 identical |
-| `stadium_a` | 60 | `camera_start` | 54.4 | 37.4 | 1.45× | 5/5 identical |
-| `wp_194948` | 120 | `camera_start` | 283.7 | 157.9 | 1.80× | 5/5 identical |
-| **all fourteen** | **1160** | | **2928.4 s** | **1728.4 s** | **1.69×** | **70/70 identical** |
+| clip | frames | before | after §1–§5 | | after §7–§8 | | camera files |
+|---|---|---|---|---|---|---|---|
+| `14604731_1080_1920_30fps` | 120 | 261.4 s | 149.4 | 1.74× | **133.0** | 1.97× | 5/5 identical |
+| `14604731_..._Copy` | 180 | 441.4 | 245.7 | 1.78× | **213.3** | 2.07× | 5/5 identical |
+| `broadcast` | 60 | 118.6 | 71.2 | 1.70× | **62.1** | 1.91× | 5/5 identical |
+| `CRO_MOR_194948` | 120 | 273.4 | 154.1 | 1.83× | **135.2** | 2.02× | 5/5 identical |
+| `demo_14604680` | 60 | 44.0 | 27.3 | 1.62× | **24.2** | 1.82× | 5/5 identical |
+| `ENG_FRA_232015` | 180 | 674.6 | 379.0 | 1.82× | **301.8** | 2.24× | 5/5 identical |
+| `fan` | 120 | 189.9 | 143.8 | 1.32× | **88.2** | **2.15×** | 5/5 identical |
+| `g11710897` | 40 | 110.3 | 65.1 | 1.75× | **55.9** | 1.97× | 5/5 identical |
+| `g14604660` | 40 | 77.6 | 49.3 | 1.62× | **43.4** | 1.79× | 5/5 identical |
+| `g15449383` | 40 | 138.3 | 108.0 | 1.30× | **72.4** | **1.91×** | 5/5 identical |
+| `MOR_POR_181952` | 60 | 92.0 | 60.8 | 1.55× | **49.6** | 1.85× | 5/5 identical |
+| `NET_ARG_225042` | 60 | 136.6 | 79.4 | 1.75× | **70.8** | 1.93× | 5/5 identical |
+| `stadium_a` | 60 | 53.6 | 37.4 | 1.45× | **25.9** | 2.07× | 5/5 identical |
+| `wp_194948` | 120 | 279.5 | 157.9 | 1.80× | **137.0** | 2.04× | 5/5 identical |
+| **all fourteen** | **1160** | **2891.2 s** | 1728.4 | 1.69× | **1412.8 s** | **2.05×** | **70/70 identical** |
+
+**Seventy camera files, none of them one byte different**, on both rounds. And once with a
+non-default scale ladder, because everything above runs at the shipped `(2, 4, 7)`: `g11710897`
+under `CAMLAB_RIDGE_SCALES=2,4,7,14,28` is 148.4 → 82.3 s, 1.80×, 5/5 identical.
+
+**The spread is the finding, and it moved.** After §1–§5 it was 1.30× to 1.83×, and the two clips
+at the bottom — `fan` and `g15449383` — were the two with many unfittable frames, so `solve_selfheal`
+dominated their runs and that was the one stage untouched. §7 fixed exactly that, and the spread is
+now **1.79× to 2.24×, with no outliers left**: `fan` went 1.32× → 2.15×, `g15449383` 1.30× → 1.91×.
+Reading the mean would have said "1.69×, good"; reading the spread said where the next hour
+belonged.
 
 **Seventy camera files, none of them one byte different.** And once more with a non-default scale
 ladder, because everything above runs at the shipped `(2, 4, 7)`: `g11710897` under
@@ -380,26 +395,83 @@ per-frame paint loops in the four stage scripts, and that is not done here.
 
 ---
 
+## 7. SIFT was described once a frame per CALL, and self-heal calls it a pair at a time
+
+`measure_pairs` built its descriptor cache inside itself. Right for `solve_carry` — one call over
+the whole clip, one `detectAndCompute` a frame, confirmed by the profile at 118 `feats()` calls and
+60 descriptions. Wrong for `solve_selfheal`, which calls it as a PAIR inside
+`for round -> for bad frame -> for side`, so the cache held two entries and died: frame `i`
+described once per side, and the good neighbours bracketing a contiguous bad block described again
+for every `i` in it — up to `4 × bad × rounds` descriptions of `frames` distinct images.
+
+It is a module-level LRU now, keyed on path, size, mtime and `max_features`. **And it targets
+exactly the clips everything above helped least**, which is the point:
+
+| clip | self-heal | chain | against the base |
+|---|---|---|---|
+| `fan` | 97.6 → **54.2 s** | 144.0 → **101.8** | 1.32× → **1.86×** |
+| `g15449383` | 69.1 → **43.7** | 110.3 → **85.2** | 1.30× → **1.65×** |
+| `g11710897` | 11.3 → 9.5 | 67.9 → 65.8 | |
+| `broadcast` | 5.9 → 5.9 | 74.0 → 73.7 | nothing to hit, and it costs nothing |
+
+Exact, and the one way it could not have been was checked before it landed: SIFT is deterministic,
+so a hit is the bytes the call would have produced, and the risk is a cache changing how often a
+randomised downstream step runs — `findHomography` here is `USAC_MAGSAC`. Probed: a repeat call
+returns the identical homography, an extra `detectAndCompute` between two calls does not change it,
+and advancing OpenCV's global RNG does not change `findHomography`. USAC seeds itself.
+
+## 8. The chain detected the same paint 551 times where 300 would do
+
+Counted, not guessed. `broadcast`, 60 frames, `paint_masks` calls per stage:
+
+| stage | before | after | the floor |
+|---|---|---|---|
+| carry | 120 | **60** | 60 |
+| self-heal | 60 | 60 | 60 — already minimal |
+| shared centre | 189 | **129** | 60 |
+| smooth | 120 | **60** | 60 |
+| polish | 62 | 62 | 60 — already minimal |
+| **total** | **551** | **431** | **300** |
+
+Three versions of one mistake: a full-clip sweep, then a second full-clip sweep over the same
+frames, against an `EVIDENCE_CACHE` that holds four. On any clip longer than four the second sweep
+missed every time.
+
+`smooth_camera` scored the current camera over the whole clip and then the smoothed one; both are
+now scored on the same frame back to back. The decision could not move with them — `floor` is a
+median over every frame's marking count — so that loop stayed and now does no scoring at all.
+`solve_shared_centre` built its before and after arrays as two comprehensions; one loop now.
+`solve_carry` had both faults: `segs()` called `paint_masks` directly, invisible to
+`frame_residual`, which then detected the same pixels again; and its sweep ran after the carry had
+finished. `segs()` goes through the cache now and each frame's pair is taken **the moment that
+frame is final**, which is exact because every frame is assigned exactly once.
+
+| clip | before | after | carry | camera files |
+|---|---|---|---|---|
+| `broadcast` | 72.7 s | 66.4 s | 25.4 → 23.7 s | 5/5 identical |
+| `CRO_MOR_194948` | 160.8 | 143.7 | 59.6 → 52.2 | 5/5 identical |
+| `g11710897` | 64.7 | 58.2 | 16.8 → 15.3 | 5/5 identical |
+| `g14604660` | 50.1 | 44.8 | | 5/5 identical |
+
 ## What is left, in order
 
-1. **SIFT is the biggest single thing in the chain now** — 11.0 s of a 31.2 s `carry` on
-   `broadcast`, and 97 s of `fan`'s 142. Its own descriptor cache was checked and is correct (118
-   `feats()` calls, 60 `detectAndCompute`, one per frame), so this is not recomputation *within* a
-   stage; it is the cost of the method, and OpenCV already spreads it over ten cores. What IS
-   recomputation is across stages: `solve_selfheal` runs `measure_pairs` again, in a different
-   process, on frames `solve_carry` already described. A descriptor cache on disk is the shape of
-   the fix, and on `fan` it is worth most of a stage that is two thirds of the run.
-2. **The four stage scripts call `paint_masks(cv2.imread(...))` directly**, bypassing the evidence
-   cache, and `smooth_camera` walks the clip twice with a four-entry cache. The pattern that fixes
-   it is `frame_evidence_cached` plus `hold_frames`, both already in the repo.
-3. **The per-frame loops are serial.** See §6: the ceiling is now 2.8×, not 1.0×, and the thing
-   that would cash it in is those loops rather than `default_workers()`.
+1. **`shared centre` is 129 paint computations against a floor of 60.** Its `segs()` pass over
+   every frame is structurally separate from the search that follows, and the search's own misses
+   are already bounded by `hold_frames`. That one needs the stage restructured, not a loop fused.
+2. **SIFT is still the biggest single thing in `carry`** — 60 frames at 183 ms, and OpenCV already
+   spreads it over ten cores. The cross-stage recomputation is gone; what is left is the cost of
+   the method. Making it cheaper means fewer features or a cheaper detector, which are accuracy
+   knobs, not performance ones.
+3. **The per-frame loops are serial.** See §6: the ceiling is 2.8×, not 1.0×, and the thing that
+   would cash it in is those loops rather than `default_workers()`.
 4. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family, run
-   about 105 times per LM refit. Not measured on its own yet; it is what is left inside
-   `line_errors` after §4 and §5.
+   about 105 times per LM refit. It is what is left inside `line_errors` after §4 and §5. Measure
+   it with a wall clock, not a profile — see the second warning.
 5. **The paint stage is 34 ms and about half of it is `distanceTransform` and `thin`.** Both are
-   OpenCV or already sparse. Getting past this means changing what is asked, which was the 2026-08-13
-   document's closing sentence and is still true — it was just three functions early.
+   OpenCV or already sparse, and `distanceTransform` is computed over the whole frame although
+   nothing outside the surface mask is ever read. Getting past this means changing what is asked,
+   which was the 2026-08-13 document's closing sentence and is still true — it was just five
+   functions early.
 
 ## Corrected in the repo by this work
 
