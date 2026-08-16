@@ -269,6 +269,92 @@ def compare_line(model: np.ndarray, found: np.ndarray, *,
     return offset, angle, length, p_model, p_found
 
 
+def _rowdot(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Row-wise dot of 2-vectors, **bit-for-bit what `a @ b` returns on one pair**.
+
+    `b` may be a single `(2,)` vector or one per row.
+
+    This exists because the obvious spellings are not equal to the scalar one and this repo's
+    metric is compared with `==`. Probed over 20 000 random pairs against `[a @ b for a, b in ...]`:
+
+        `(A * B).sum(axis=1)`                  differs
+        `A @ b`  (a gemv, for fixed `b`)       differs
+        `A[:, 0] * B[:, 0] + A[:, 1] * B[:, 1]` differs
+        `np.einsum('ij,ij->i', A, B)`          differs
+        `np.matmul(A[:, None, :], B[:, :, None])`  **equal on every pair**
+
+    BLAS's two-element dot fuses its multiply and add — one rounding — and every elementwise form
+    rounds the product and then the sum. The difference is 1e-16 relative and it is not academic:
+    `_assign_in_order` settles which segment a marking gets with `best == take`, and a solve
+    minimises this number a hundred times a frame.
+
+    A stack of matrix-vector products, `(M, 2, 2) @ u`, is NOT affected — it already agrees with
+    the single `(2, 2) @ u` — so `_overlap`'s projection is left as it was written.
+    """
+    return np.matmul(a[:, None, :], np.broadcast_to(b, a.shape)[:, :, None]).reshape(-1)
+
+
+def _candidates(uv, u, nrm, seg_pts, seg_dir, min_cos, min_overlap_px, max_offset_px):
+    """`compare_line(uv, p)` against EVERY detected segment at once, then the three gates.
+
+    This is `line_errors`' inner loop and it was the repo's hottest Python: 259 331 calls of
+    `compare_line` in one `shared centre` stage, each doing six dot products on 2-vectors, plus
+    `_overlap` and `_unit` under it — `np.linalg.norm` was called **1 044 965 times a stage**. The
+    arithmetic is trivial; there was simply an interpreter round trip per (marking, segment) pair
+    where the whole marking's worth of pairs is one `(N, 2)` broadcast.
+
+    `compare_line` itself is unchanged and is still the single-pair definition every other caller
+    and every test uses. This is that function written once over N segments, and the ordering is
+    the same — survivors come back in ascending segment index, as `enumerate` gave them — so
+    `_assign_in_order` sees exactly what it saw.
+
+    **Every 2-vector dot goes through `_rowdot`, and the reason is not style.** The first version
+    of this used `(A * B).sum(axis=1)`, which is the obvious way to write a row-wise dot and is
+    **not bit-for-bit what `a @ b` returns**. The equivalence check caught it at once: offsets
+    moved by 1e-16 to 9e-14 on 12 of 14 clips. That is far below any measurement here and it still
+    matters, because `_assign_in_order` settles its alignment with `best == take` — an exact float
+    comparison — so a last-bit difference can hand a marking a different segment.
+
+    Returns the same tuples the loop appended: `(segment index, offset, angle, overlap, point on
+    model, point on found, the segment)`. The three scalars are converted back to Python floats
+    rather than left as `np.float64`, because they end up in `LineError` and from there in JSON.
+    """
+    if not len(seg_pts):
+        return []
+    # 1. the angle gate, over all segments at once. Everything after it works on the survivors.
+    cos_all = _rowdot(seg_dir, u)
+    passes = np.abs(cos_all) >= min_cos
+    if not passes.any():
+        return []
+    idx = np.flatnonzero(passes)
+    found, vdir, cos = seg_pts[idx], seg_dir[idx], cos_all[idx]
+
+    # 2. `_overlap`: each segment's extent projected onto the model's direction, clipped to it.
+    #    `(M, 2, 2) @ u` is a stack of the same matrix-vector product the scalar version does, and
+    #    agrees with it exactly — it is only the ROW-WISE dot of 1-D vectors that does not.
+    span = float((uv[1] - uv[0]) @ u)
+    t_found = np.sort((found - uv[0]) @ u, axis=1)
+    lo = np.maximum(0.0, t_found[:, 0])
+    hi = np.minimum(span, t_found[:, 1])
+    length = np.maximum(0.0, hi - lo)
+
+    # 3. `compare_line`: the offset at the middle of the overlap, perpendicular to the model.
+    t_mid = np.where(length > 0, (lo + hi) / 2.0, span / 2.0)
+    p_model = uv[0] + t_mid[:, None] * u
+    # same sense as the model, so the angle is not 180-ambiguous
+    v = np.where((cos < 0)[:, None], -vdir, vdir)
+    t = _rowdot(p_model - found[:, 0], v)
+    p_found = found[:, 0] + t[:, None] * v
+    offset = _rowdot(p_found - p_model, nrm)
+    angle = np.degrees(np.arctan2(v[:, 0] * u[1] - v[:, 1] * u[0], _rowdot(v, u)))
+
+    # 4. the overlap and offset gates.
+    keep = (length >= min_overlap_px) & (np.abs(offset) <= max_offset_px)
+    return [(int(idx[j]), float(offset[j]), float(angle[j]), float(length[j]),
+             p_model[j], p_found[j], found[j])
+            for j in np.flatnonzero(keep)]
+
+
 def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, height: int,
                 cx: float | None = None, cy: float | None = None,
                 *, match_angle_deg: float = MATCH_ANGLE_DEG,
@@ -296,10 +382,9 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
     # 2-vector's norm is the same two multiplies and one add either way — and `line_errors` is
     # called about 105 times per frame by one LM refit, always on the SAME segments.
     segments = np.asarray(segments, dtype=float).reshape(-1, 4)
-    pts = segments.reshape(-1, 2, 2)
-    delta = pts[:, 1] - pts[:, 0]
-    seg_pts = list(pts)
-    seg_dir = list(delta / (np.linalg.norm(delta, axis=1) + 1e-12)[:, None])
+    seg_pts = segments.reshape(-1, 2, 2)
+    delta = seg_pts[:, 1] - seg_pts[:, 0]
+    seg_dir = delta / (np.linalg.norm(delta, axis=1) + 1e-12)[:, None]
     # Hoisted out of the per-marking, per-segment loop it used to sit in: it depends on nothing
     # inside it, and it was costing a `radians` and a `cos` on all 141 000 comparisons a stage.
     min_cos = float(np.cos(np.radians(match_angle_deg)))
@@ -327,16 +412,8 @@ def line_errors(segments: np.ndarray, focal: float, rvec, centre, width: int, he
 
         u = _unit(uv[0], uv[1])
         nrm_u = np.array([-u[1], u[0]])
-        cands = []
-        for si, (p, v) in enumerate(zip(seg_pts, seg_dir, strict=True)):
-            if abs(float(v @ u)) < min_cos:
-                continue
-            off, ang, ov, p1, p2 = compare_line(uv, p, u=u, nrm=nrm_u, v=v)
-            if ov < min_overlap * vis_len:
-                continue
-            if abs(off) > max_offset_px:
-                continue
-            cands.append((si, off, ang, ov, p1, p2, p))
+        cands = _candidates(uv, u, nrm_u, seg_pts, seg_dir, min_cos,
+                            min_overlap * vis_len, max_offset_px)
         model.append((k, uv, u, cands, family))
 
     return _assign_in_order(model, seg_pts)
