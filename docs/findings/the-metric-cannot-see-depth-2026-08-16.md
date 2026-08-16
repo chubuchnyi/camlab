@@ -9,7 +9,14 @@ Reproduce:
 ```bash
 PYTHONPATH=src python scripts/import_worldpose_gt.py --all --judge
 PYTHONPATH=src:. python scripts/bench_vs_worldpose.py --camera camera_polished.json
+PYTHONPATH=src python scripts/overlay_worldpose.py CRO_MOR_194948 0   # and MOR_POR_181952 7
 ```
+
+**Check the ground truth before checking anything measured against it.** The world frame is not
+documented by the dataset, so `overlay_worldpose.py --players` projects WorldPose's own *player*
+positions through WorldPose's own camera: no pitch template, no paint detector, no camlab geometry.
+On `CRO_MOR_194948` frame 0 all six visible players get a stick standing on them. That verifies the
+convention this whole document rests on, and it does so without using anything in this repo.
 
 ---
 
