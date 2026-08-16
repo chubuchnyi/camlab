@@ -109,6 +109,37 @@ Ordered by how much they cost.
   a left term is that term minus a min — and the whole loop then fits in uint8.
   (`making-it-fast-again-2026-08-16.md`.) The earlier landmine, still true as far as it goes: "10×
   headroom" measured against a primitive that answers a *different* question is not headroom.
+- **cProfile ranks by CALL COUNT as much as by cost, and it is wrong by an order of magnitude on a
+  function called a quarter of a million times.** It reported `compare_line` at 259 331 calls and
+  **9.8 s of a 40.3 s `shared centre` stage**. Removing all 259 331 calls changed that stage by
+  nothing measurable and `line_errors` itself by 0.685 → 0.698 ms. cProfile adds about a microsecond
+  of bookkeeping per observed call, and charges the callees the same way — which is how
+  `np.linalg.norm` appeared at a million calls a stage. The same profile was right about
+  `straight_markings` (6300 calls, 5.1 s, and it held up end to end). **A profile is trustworthy
+  for ranking functions with similar call counts and misleading across them**; confirm with a wall
+  clock on the function itself before rewriting it.
+- **The same commit measures 155.3 s and 119.7 s on the same machine on the same clip.** A 30 %
+  spread on background load. A stage-by-stage progression assembled as each change lands, over two
+  hours, is not a progression — it is a record of the machine's mood, and the first version of
+  `making-it-fast-again-2026-08-16.md` read 2.22× where the answer is 1.70×. Re-run every point in
+  one sitting, interleaved, and print `getloadavg()`.
+- **Whether vectorising wins is a property of the data, not of the technique** — the same rule the
+  sparse trick already has here, one level up. Replacing `line_errors`' per-segment Python loop
+  with one `(N, 2)` pass is a **1.10× on the whole chain at twelve segments a frame, and a wash at
+  nine**: below about ten, the fancy indexing and the broadcast cost what the loop cost. N here is
+  set by `MIN_MERGED_PX` and is 7–12.
+- **A row-wise dot of 2-vectors is not bit-for-bit `a @ b`, and this repo compares its metric with
+  `==`.** BLAS's two-element dot fuses its multiply and add and rounds once; `(A * B).sum(axis=1)`,
+  `A @ b`, the explicit `A[:,0]*B[:,0] + A[:,1]*B[:,1]` and `np.einsum` all round twice and differ
+  in the last bit. Only `np.matmul(A[:,None,:], B[:,:,None])` agrees on every one of 20 000 random
+  pairs. It moved `line_errors`' offsets by 1e-16 to 9e-14 on 12 of 14 clips, which matters because
+  `_assign_in_order` settles which segment a marking gets with `best == take`. A stack of
+  matrix-vector products, `(M, 2, 2) @ u`, is unaffected.
+- **An instrument that invents its own input measures the input.** `bench_residual_warm` fed the
+  normal walk random points with random directions instead of the ones `frame_residual` actually
+  passes. Real normals point ACROSS real markings, so most rays find paint in the first pixel; the
+  synthetic set has no such structure, and once the walk gained an early exit it reported the walk
+  as costing **167 % of the whole score it is part of**. Capture the real arguments and time those.
 - **Before believing a profile, check the profiler is profiling the shipped function.**
   `bench_paint_breakdown.py`'s first draft carried a private copy of `ridge_map`'s loop and went on
   reporting the old cost of a function that had been rewritten. A stale run directory, in an

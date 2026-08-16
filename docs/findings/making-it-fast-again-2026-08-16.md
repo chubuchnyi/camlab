@@ -1,60 +1,84 @@
-# Making it fast again: the chain is 1.79× and four of the last day's conclusions were wrong
+# Making it fast again: the chain is 1.3–1.8× and four of the last day's conclusions were wrong
 
 Measured 2026-08-16 on the same laptop (i7-11850H, 16 threads, no GPU), against
 `docs/findings/making-it-fast-2026-08-13.md`, which is the only performance work this repo had
 done and which this doc contradicts in four places.
 
-**The headline.** The whole chain on `broadcast` — 60 frames at 1920×1080, same seed, same
-machine — goes **155.3 s → 87.0 s, 1.79×**, and every number it reports is unchanged:
+**The headline.** Three clips, every stage, base commit `066b7a9` against this branch, **all six
+runs taken in one sitting** — see the warning about that below, which cost this document its first
+set of numbers:
 
-| stage | 2026-08-13 | now |
-|---|---|---|
-| carry | 47.3 s | 31.2 s |
-| self-heal | 14.4 | 7.4 |
-| shared centre | 53.4 | 27.8 |
-| smooth | 21.4 | 10.9 |
-| polish | 18.8 | 9.7 |
-| **total** | **155.3 s** | **87.0 s** |
-| across / worst line / worst spot | 4.27 / 3.88 / 10.43 px | **identical** |
-| frames with a focal, median focal | 60/60, 4201.9 px | **identical** |
+| clip | frames × size | segments/frame | before | now | |
+|---|---|---|---|---|---|
+| `broadcast` | 60 × 1920×1080 | 9 | 119.7 s | **70.6 s** | 1.70× |
+| `CRO_MOR_194948` | 120 × 1920×1080 | 12 | 278.8 s | **156.5 s** | 1.78× |
+| `fan` | 120 × 1080×608 | 7 | 188.6 s | **142.0 s** | 1.33× |
 
-Three A/B rounds, interleaved old-tree/new-tree so background load falls on both. The old tree's
-155.3 s is the README's own "155 s", which is the closest thing to a calibration this had.
+**Every number the chain reports is unchanged on all three** — `broadcast` scores across
+7.24 / 4.32 / 4.27 px through the stages, worst line 6.81 / 4.00 / 3.88, worst spot
+11.98 / 10.50 / 10.43, 60/60 frames at a median focal of 4201.9 px; `CRO_MOR_194948` 120/120 at
+5962.7; `fan` 120/120 at 3001.8. The camera is bit for bit the one that was there before.
 
-**And a conclusion measured on one clip is a conclusion about one clip**, so the same A/B on `fan`
-— 120 frames at 1080×608, from a bootstrap seed with no hand anchor, so a poor solve but an
-identical one on both sides:
+`fan` gets a third of what `CRO_MOR_194948` gets, and the spread is the useful part. `fan` is a
+third of the pixels, so the paint stage is a smaller share of it, and this run is 97 s of 142 in
+self-heal — SIFT, which is `measure_pairs` re-run per repaired frame in a process that cannot see
+the descriptors `solve_carry` computed for the same frames. The stages this work touched move
+1.3–2.4× on all three clips. The stage it did not touch is now two thirds of `fan`.
 
-| stage | before | now |
-|---|---|---|
-| carry | 27.2 s | 21.6 s |
-| self-heal | 134.6 | 112.4 |
-| shared centre | 29.7 | 15.6 |
-| smooth | 13.7 | 8.1 |
-| polish | 10.2 | 6.2 |
-| **total** | **215.3 s** | **164.0 s** — 1.31× |
-| across at each stage, median focal, frames | 22.36 / 9.96 / 9.94 / 9.64 / 9.47 px, 3001.8 px, 120/120 | **identical** |
+## The first warning, because it invalidated this document's first draft
 
-**1.31×, not 1.79×, and the difference is the whole point of quoting two clips.** `fan` is a third
-of `broadcast`'s pixels, so the paint stage is a smaller share of it; and this run is dominated by
-self-heal at 112 s of 164, which is SIFT — `measure_pairs` re-run per repaired frame, in a process
-that cannot see the descriptors `solve_carry` computed for the same frames. The stages this work
-touched move 1.26–1.90× on both clips. The stage it did not touch is now 68 % of `fan`.
+**The same base commit measures 155.3 s and 119.7 s on the same machine on the same clip** — a
+30 % spread — depending on what else was running. Every number in the first version of this file
+came from timings taken over two hours as each change landed, and the machine's load moved from
+3.8 to 1.6 across them. That table read as a progression from 155.3 s to 70.1 s, a 2.22×, and the
+real figure is 1.70×. **A stage-by-stage progression assembled across sessions is not a
+progression, it is a record of the machine's mood**, and the only fix is to re-run every point in
+one sitting, which is where the table above comes from:
 
-## The first thing to say: none of the 2026-08-13 numbers had a script
+| `broadcast`, one session | total |
+|---|---|
+| `066b7a9`, the base | 119.7 s |
+| the ridge map factored, `_turf` in `inRange` | 95.1 |
+| the normal walk vectorised | 88.8 |
+| `line_errors` stops rebuilding the pitch | 79.2 |
+| `compare_line` stops recomputing its caller's unit vectors | 73.6 |
+| the normal walk in blocks, dropping finished samples | 70.6 |
+| the candidate loop vectorised | 71.7 — see §6, it is a wash HERE |
+
+Every bench in `scripts/` prints `getloadavg()` and says so above 1.0. That is not decoration.
+
+## The second warning: cProfile ranks by call count as much as by cost
+
+cProfile said `compare_line` was **259 331 calls and 9.8 s of a 40.3 s `shared centre` stage**.
+Vectorising it away — removing all 259 331 calls — changed that stage by **nothing measurable** on
+`broadcast`, and `line_errors` itself by 0.685 → 0.698 ms.
+
+cProfile adds roughly a microsecond of bookkeeping to every call it observes, so a function called
+a quarter of a million times a stage is charged a second or two that does not exist outside the
+profiler — and so are its callees, which is why `np.linalg.norm` appeared at a million calls. **A
+profile is trustworthy for ranking functions with similar call counts and misleading across them.**
+The fix is not to stop using it but to confirm with a wall clock on the function itself, which is
+`scripts/bench_line_errors.py`.
+
+The same profile was right about `straight_markings` (6300 calls, 5.1 s) and about the paint stage,
+and both held up end to end. It was wrong by roughly an order of magnitude about the one function
+in the list with a six-figure call count.
+
+## The third thing to say: none of the 2026-08-13 numbers had a script
 
 Every accuracy finding in this repo names a bench in `scripts/` that reproduces it. The
 performance day names none — there was no timing harness anywhere in `scripts/` or `tests/`, and
 `git log --diff-filter=A` says there never had been. That is why four of its conclusions could sit
 unchallenged for three days while three of them were stale within one.
 
-Six land with this work, and they are the durable part of it:
+Nine land with this work, and they are the durable part of it:
 
 | | |
 |---|---|
 | `bench_paint_breakdown.py` | the paint stage split to every primitive, **calling the shipped functions** |
 | `bench_ridge_formulations.py` | four formulations of the ridge map, agreement checked at eleven thresholds |
 | `bench_residual_warm.py` | the cold score, the warm score, and the normal walk's share of it |
+| `bench_line_errors.py` | `line_errors` on a wall clock, with no profiler attached — see the second warning |
 | `bench_frame_parallel.py` | per-frame scaling across processes, decode and paint measured separately |
 | `bench_chain.py` | the whole chain per stage, **against a copy** of the run directory |
 | `bench_surface_resolution.py` | a refutation: a 4× on `_surface` that must not ship |
@@ -165,8 +189,40 @@ element, same dtype, same order, so **bit for bit** the same answer — pinned i
 synthetic rays (parallel stripes with holes, so a rewrite taking the *global* minimum instead of
 the *first* one fails) and on real paint.
 
-**Warm score 12.0–13.2 → 2.9–3.8 ms, 3.2–4.1×.** The old loop's `if done.all(): break` never fired
-on a real frame: some sample always fails to find paint.
+**And then it went too far the other way.** One pass over all 161 offsets for every sample is its
+own waste: a sample sitting on its own paint reaches its minimum at the first offset and is
+finished at the second, and on `broadcast` two thirds of the columns are done before `t` reaches
+1 px. The walk now goes in geometrically growing blocks — 4, 8, 16, 32, 64, 128 — dropping the
+samples that are finished after each. Geometric because neither end may pay for the other: a fixed
+small block costs forty Python trips on the rays that really do run the whole 40 px, and that is
+not a rare case, it is the direction pointing AWAY from the marking, which is half of every call.
+
+| clip | walk before | walk now | | warm before | warm now | |
+|---|---|---|---|---|---|---|
+| `fan` | 11.2 ms | **1.3** | 8.6× | 12.1 ms | **2.1** | 5.8× |
+| `broadcast` | 10.9 | **1.3** | 8.4× | 11.8 | **2.1** | 5.6× |
+| `g11710897` | 10.5 | **2.1** | 5.0× | 11.5 | **2.9** | 4.0× |
+| `CRO_MOR_194948` | 11.5 | **1.6** | 7.2× | 12.2 | **2.5** | 4.9× |
+
+Both compactions are exact: a finished column's answer never changes again — that is what the old
+loop's `~done &` guard said — and a carried running minimum is exact because a minimum is
+associative. The old loop's `if done.all(): break` never fired on a real frame, because some sample
+always fails to find paint; dropping columns rather than waiting for all of them is what that guard
+was reaching for.
+
+`tests/test_across_on_normal.py` pins the thing that matters here: **the block size is not part of
+the answer.** `(1, 1)` checks every offset one at a time, `(400, 400)` does all 161 in one block
+with no compaction at all, and three sizes between; all five must give the floats the original loop
+gave. A carried minimum lost at a boundary, or an `at` attributed to the wrong block, can hide from
+a single fixed size.
+
+**`bench_residual_warm.py` had to be corrected to produce that table**, and the correction is the
+lesson. It fed the walk random points on the playing surface with random directions — a far harder
+distribution than a solve ever meets, since real normals point ACROSS real markings and most rays
+find paint in the first pixel. Once the walk gained an early exit, that synthetic set reported it
+as costing **167 % of the whole score it is part of**, which is the absurdity that showed it. It
+now captures the arguments the real `frame_residual` passes and times those. An instrument that
+invents its own input measures the input.
 
 ## 4. What the profile says once the paint is not the answer
 
@@ -190,7 +246,55 @@ cameras a frame**, one solved and four deliberately wrong, because a refit spend
 evaluations off the optimum and that is where agreement has to hold too. **14 of 14 clips, 20 of 20
 combinations each, identical.**
 
-## 5. "Process parallelism. Refuted." — the direction was right, the number is now 2.8× not 1.0×
+`line_errors` itself, timed with a wall clock rather than read off a profile:
+
+| clip | segments | before | memo | + hoists | + vectorised (§6) |
+|---|---|---|---|---|---|
+| `broadcast` | 9 | 1.538 ms | 0.902 | **0.689** | 0.698 |
+| `fan` | 7 | 1.811 | 1.164 | **0.864** | 0.877 |
+| `CRO_MOR_194948` | 12 | 2.561 | 1.768 | 1.285 | **0.985** |
+
+## 5. The candidate loop vectorised: nothing on two clips, 1.10× on the chain of a third
+
+The inner loop compares one projected marking against every detected segment, and it was
+`compare_line` 259 331 times a stage. Writing it once over N segments — `_candidates` — is the
+obvious move, and the honest answer is that it depends entirely on N, which is 7 to 12 here:
+
+| clip | segments/frame | `line_errors` loop | vectorised | whole chain |
+|---|---|---|---|---|
+| `fan` | 7 | 0.859–0.882 ms | 0.877–0.911 | not measurable |
+| `broadcast` | 9 | 0.685–0.707 | 0.698–0.725 | 70.6 s → 71.7, i.e. a wash |
+| `CRO_MOR_194948` | 12 | 1.279–1.322 | **0.985–1.013** | **167.9 s → 153.3, 1.10×** |
+
+Three interleaved rounds each, minimum of 400 calls. Below about ten segments the numpy setup —
+the fancy indexing, the broadcast, the `where` — costs what the Python loop cost, and above it the
+loop loses. It is kept because it is a real 1.10× on a whole chain at twelve segments and free at
+nine, and because segment counts go up when the paint gets better, not down. It is a good example
+of the rule this repo already has for the sparse trick: **whether vectorising wins is a property of
+the data, not of the technique.**
+
+**And the first version of it was wrong in the last bit.** `(A * B).sum(axis=1)` is the natural way
+to write a row-wise dot of 2-vectors and is **not** bit-for-bit `a @ b`: BLAS's two-element dot
+fuses its multiply and add and rounds once, and every elementwise form rounds the product and then
+the sum. `check_line_errors_equivalence.py` caught it immediately — offsets moved 1e-16 to 9e-14 on
+**12 of 14 clips**. That is far below anything measured here and it still had to be fixed, because
+`_assign_in_order` decides which segment a marking gets with `best == take`, an exact float
+comparison. Probed over 20 000 random pairs:
+
+```
+(A * B).sum(axis=1)                        differs
+A @ b            (a gemv, for fixed b)     differs
+A[:,0]*B[:,0] + A[:,1]*B[:,1]              differs
+np.einsum('ij,ij->i', A, B)                differs
+np.matmul(A[:,None,:], B[:,:,None])        equal on every pair
+(M, 2, 2) @ u    (a stack of gemvs)        equal on every pair
+```
+
+`_rowdot` is that fifth line and `tests/test_rowdot.py` pins it — including the negative half, that
+the other four really do differ, so the next reader who finds `_rowdot` baroque meets a failing
+test rather than a diff.
+
+## 6. "Process parallelism. Refuted." — the direction was right, the number is now 2.8× not 1.0×
 
 The 2026-08-13 table scored 60 frames at 16.6 s on one worker and 16.8 on eight, with 7.8 cores
 busy, and concluded memory bandwidth. Two faults in the instrument and one in the workload:
@@ -243,20 +347,24 @@ per-frame paint loops in the four stage scripts, and that is not done here.
 
 ## What is left, in order
 
-1. **`compare_line` and `_overlap` are still 259 000 Python calls a stage** on 2-vectors. The
-   redundant work is gone; what remains is one call per (marking, segment) pair, and it wants to be
-   one vectorised call per marking over all segments. Worth ~10 s of a 28 s shared-centre stage.
-2. **SIFT is 11.0 s of a 31.2 s carry** — 60 frames at 183 ms each, and OpenCV already spreads it
-   over ten cores. Its descriptor cache was checked and is correct (118 `feats()` calls, 60
-   `detectAndCompute`). It is not recomputation; it is the cost of the method. It is also computed
-   afresh in `solve_selfheal`, in a different process, for frames `solve_carry` already did.
-3. **`_across_on_normal` walks all 161 offsets for every sample**, and most samples find their
-   paint in the first two or three. Chunking `t` and dropping finished columns is exact and
-   probably another 3–5× on the warm score.
-4. **The four stage scripts call `paint_masks(cv2.imread(...))` directly**, bypassing the evidence
+1. **SIFT is the biggest single thing in the chain now** — 11.0 s of a 31.2 s `carry` on
+   `broadcast`, and 97 s of `fan`'s 142. Its own descriptor cache was checked and is correct (118
+   `feats()` calls, 60 `detectAndCompute`, one per frame), so this is not recomputation *within* a
+   stage; it is the cost of the method, and OpenCV already spreads it over ten cores. What IS
+   recomputation is across stages: `solve_selfheal` runs `measure_pairs` again, in a different
+   process, on frames `solve_carry` already described. A descriptor cache on disk is the shape of
+   the fix, and on `fan` it is worth most of a stage that is two thirds of the run.
+2. **The four stage scripts call `paint_masks(cv2.imread(...))` directly**, bypassing the evidence
    cache, and `smooth_camera` walks the clip twice with a four-entry cache. The pattern that fixes
    it is `frame_evidence_cached` plus `hold_frames`, both already in the repo.
-5. **The per-frame loops are serial.** See §5: the ceiling is now 2.8×, not 1.0×.
+3. **The per-frame loops are serial.** See §6: the ceiling is now 2.8×, not 1.0×, and the thing
+   that would cash it in is those loops rather than `default_workers()`.
+4. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family, run
+   about 105 times per LM refit. Not measured on its own yet; it is what is left inside
+   `line_errors` after §4 and §5.
+5. **The paint stage is 34 ms and about half of it is `distanceTransform` and `thin`.** Both are
+   OpenCV or already sparse. Getting past this means changing what is asked, which was the 2026-08-13
+   document's closing sentence and is still true — it was just three functions early.
 
 ## Corrected in the repo by this work
 

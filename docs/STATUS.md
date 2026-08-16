@@ -210,10 +210,11 @@ branch, because pitch3d is being changed rather than accommodated.
 CPU only. No GPU, no neural network, no ML runtime, nothing trained, nothing downloaded.
 What that costs and what it buys: `archive/status-detail-2026-08-14.md`.
 
-The whole chain on `broadcast` — 60 frames at 1920×1080 on an i7-11850H — is **87 s**, from
-155 s on 2026-08-13, with every reported number identical. The paint stage is 34 ms a frame from
-66, and scoring one camera against a frame whose paint is cached is 3.2 ms from 12.2.
-`findings/making-it-fast-again-2026-08-16.md` has the tables and the six benches that reproduce
+The whole chain is **1.3–1.8× faster** than on 2026-08-13, with every reported number identical on
+every clip — `broadcast` 119.7 → **70.6 s**, `CRO_MOR_194948` 278.8 → **156.5**, `fan` 188.6 →
+**142.0**, all six runs taken in one sitting on an i7-11850H. The paint stage is 34 ms a frame from
+66, and scoring one camera against a frame whose paint is cached is 2.1 ms from 11.8.
+`findings/making-it-fast-again-2026-08-16.md` has the tables and the nine benches that reproduce
 them, and it **contradicts `findings/making-it-fast-2026-08-13.md` in four places**: the ~2×
 ceiling on `ridge_map` (it was 10.9×), the 7 ms camera-dependent remainder (12–13 ms, and 95 % of
 a warm score), "process parallelism, refuted" (the per-frame unit now gets 2.8× on eight workers,
