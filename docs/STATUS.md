@@ -1,6 +1,18 @@
 # What is true right now
 
-Last measured 2026-08-14. Read this and `findings/landmines.md`; that is the cold start.
+Last measured 2026-08-16. Read this and `findings/landmines.md`; that is the cold start.
+
+**There is a ground truth now, and it says the camera is 1.2–5.0 m out of position while the paint
+metric prefers it that way.** 89 broadcast clips with per-frame measured `K`, `R`, `t` are on disk
+(`~/AVATAR/models/worldpose/`, GT in `~/AVATAR/WorldPose/cameras/`); four are already ingested here
+because the clip id *is* the WorldPose id. Against them `camera_polished.json` comes out 1.17 /
+3.82 / 5.01 m from the real camera with 0.999× / 0.981× / 0.974× of its focal, and **86–99 % of that
+displacement is along the line of sight** — and it scores *better* on `across` than the true camera
+does (3.88 px against 30.01 on `CRO_MOR_194948`). So `across` is a floor, not a certificate: past
+~3 px it cannot rank two cameras that both sit near the paint. The fourth clip,
+`MOR_POR_181952`, is 16.24 m and **1.551× of focal** out — not thin evidence about a roughly right
+camera, simply wrong. Full measurement, and what was *not* established:
+`findings/the-metric-cannot-see-depth-2026-08-16.md`.
 
 **A run directory is only as current as its last complete run.** Until 2026-08-14 a killed chain
 left the previous run's later stages standing, and eight of nine clips were in that state — six of
@@ -73,6 +85,11 @@ markings can say which half is being looked at and no solver ever will. The view
 line is not a trajectory, it is the degeneracy drawn in space. It is **not flat**, though: sliding
 along it and re-refitting gives 1.89 px at the optimum against 4.33 px three metres away, so the
 position is pinned to about a metre. It only looked flat because nobody had searched along it.
+
+**And the optimum is in the wrong place.** Measured against the WorldPose ground truth 2026-08-16:
+the solved camera sits 1.17–5.01 m from the real one, 86–99 % of it along the line of sight, with a
+focal short by the matching 0.1–2.6 %. So the residual is pinned to a metre around a point that is
+up to five metres from the camera. The pinning is real; what it pins to is not the answer.
 
 ## Editing by hand
 
@@ -158,8 +175,13 @@ rectified correctly. A check to run on a camera you already believe, never a way
 
 ## Ruled out, so nobody spends the afternoon again
 
-- **Lens distortion.** Markings bow 0.37 px, in a random direction (42/58), and it does not grow
-  with radius. 40–65× too small for the residual it was offered to explain.
+- ~~**Lens distortion.**~~ **Re-opened 2026-08-16 — measured on one lens, and it does not
+  generalise.** On that clip the markings bow 0.37 px in a random direction (42/58), which stands
+  for that clip. The WorldPose ground truth carries **27–34 px** of it in the corners of all four of
+  its clips here — 0.07 px at the optical axis, 15.32 px at 800–1100 px radius — and that is the
+  whole of the 30 px `across` the true camera scores. It costs only 0.22 px at the median, so it is
+  an edge-of-frame effect, not a global one.
+  `findings/the-metric-cannot-see-depth-2026-08-16.md` §5.
 - **The principal point.** 638 px apart gives 2.11 px against 1.78 px through the same chain. The
   camera's other six parameters absorb it. The consistency rule stands — a camera is valid only
   under its own K — but there is nothing to fix.

@@ -411,3 +411,21 @@ Ordered by how much they cost.
   residual route only.
 - **Never `git add -A` in the AVATAR tree** — concurrent agents work there, and it picked up an
   unfinished `bench_principal_point.py` belonging to someone else.
+- **Four clips here have had a ground-truth camera the whole time, and nobody looked.** The clip id
+  **is** the WorldPose id — `CRO_MOR_194948`, `ENG_FRA_232015`, `MOR_POR_181952`, `NET_ARG_225042` —
+  so `~/AVATAR/WorldPose/cameras/<clip_id>.npz` holds per-frame `K`, `R`, `t` for every frame in the
+  run. They were solved, judged by eye, tuned and written up for days as if nothing external
+  existed. Before measuring a clip against the paint, check whether it has an answer:
+  `PYTHONPATH=src python scripts/import_worldpose_gt.py --all --judge`.
+- **`~/AVATAR/WorldPose` is the poses and cameras; the VIDEO is under `~/AVATAR/models/worldpose/`.**
+  Searching the first directory for `*.mp4` returns nothing, and "WorldPose ships no video, so there
+  is no end-to-end oracle" was stated to the user off exactly that. Wrong, and it took two
+  corrections. 89 clips, 24 GB, in `models/worldpose/WorldPose Dataset/compressed/`. A second set of
+  21 sits in `models/worldpose/FIFA Challenge 2026 Video Data/Videos/` and has **no** ground truth
+  (1 of 21 matches a camera file); do not mix the two.
+- **`across` prefers a camera 5 m out of position.** Measured 2026-08-16: our solve scores 3.88 px
+  on `CRO_MOR_194948` and the camera that actually shot it scores 30.01 px. Fitting the paint
+  tighter and being where the camera was are different objectives past ~3 px. Anything tuned to
+  minimise `across` — the polish stage, the LM `_accept`, the ridge scales — was tuned against a
+  target that rewards absorbing lens distortion into camera position.
+  (`the-metric-cannot-see-depth-2026-08-16.md`)
