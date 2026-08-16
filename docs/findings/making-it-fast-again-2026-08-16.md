@@ -21,6 +21,26 @@ machine — goes **155.3 s → 87.0 s, 1.79×**, and every number it reports is 
 Three A/B rounds, interleaved old-tree/new-tree so background load falls on both. The old tree's
 155.3 s is the README's own "155 s", which is the closest thing to a calibration this had.
 
+**And a conclusion measured on one clip is a conclusion about one clip**, so the same A/B on `fan`
+— 120 frames at 1080×608, from a bootstrap seed with no hand anchor, so a poor solve but an
+identical one on both sides:
+
+| stage | before | now |
+|---|---|---|
+| carry | 27.2 s | 21.6 s |
+| self-heal | 134.6 | 112.4 |
+| shared centre | 29.7 | 15.6 |
+| smooth | 13.7 | 8.1 |
+| polish | 10.2 | 6.2 |
+| **total** | **215.3 s** | **164.0 s** — 1.31× |
+| across at each stage, median focal, frames | 22.36 / 9.96 / 9.94 / 9.64 / 9.47 px, 3001.8 px, 120/120 | **identical** |
+
+**1.31×, not 1.79×, and the difference is the whole point of quoting two clips.** `fan` is a third
+of `broadcast`'s pixels, so the paint stage is a smaller share of it; and this run is dominated by
+self-heal at 112 s of 164, which is SIFT — `measure_pairs` re-run per repaired frame, in a process
+that cannot see the descriptors `solve_carry` computed for the same frames. The stages this work
+touched move 1.26–1.90× on both clips. The stage it did not touch is now 68 % of `fan`.
+
 ## The first thing to say: none of the 2026-08-13 numbers had a script
 
 Every accuracy finding in this repo names a bench in `scripts/` that reproduces it. The
