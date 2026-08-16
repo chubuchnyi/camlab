@@ -112,17 +112,24 @@ Measured on a laptop CPU — 11th-gen i7-11850H, no GPU in the machine:
 
 | | |
 |---|---|
-| full chain, 60 frames at 1920×1080 | **155 s** |
-| per-frame work (paint, lines, refit, score) | **340 ms** |
+| full chain, 60 frames at 1920×1080 | **87 s** (155 s before 2026-08-16) |
+| the paint stage, one 1920×1080 frame | **34 ms** (66 ms before) |
+| scoring one camera against a frame whose paint is cached | **3.2 ms** (12.2 ms before) |
 | peak memory, per-frame work | 180 MB |
 | peak memory, full chain | 1.1 GB |
 | install size | 482 MB |
 | a 60-frame run on disk | ~24 MB of JPEG |
 
-**One core is the whole requirement.** The work is single-threaded and does not benefit from more:
-342 ms a frame on one thread, 324 ms on sixteen — five per cent, which is noise. Several stages are
-embarrassingly parallel across frames and simply are not parallelised, so more cores *could* help,
-but that is work nobody has done rather than a property of the method.
+**One core is not the requirement, and this file said it was for three days after it was
+refuted.** The claim was "342 ms a frame on one thread, 324 ms on sixteen, which is noise". The
+342 ms was already spread over ten cores inside OpenCV; what did not move was the Python half.
+`cv2.setNumThreads(1)` costs 3.0× on `measure_pairs`, which is the measurement that settles it.
+
+What is true: the per-frame work is memory-bandwidth-bound, and it now gets **2.8× on eight
+processes** where in August 2026 it got 1.0× — the wall lifted when the paint stage's traffic was
+cut threefold. The stages that would cash that in are embarrassingly parallel across frames and
+are still serial, so more cores *could* help; that is work nobody has done rather than a property
+of the method. `docs/findings/making-it-fast-again-2026-08-16.md` has the table.
 
 The GPU box in `scripts/deploy.sh` is used because it is a machine that is always on and reachable,
 not because anything here needs it. This runs on a laptop.
@@ -131,7 +138,7 @@ not because anything here needs it. This runs on a laptop.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev,cv]"
-.venv/bin/python -m pytest                                   # 89 tests, ~6 s
+.venv/bin/python -m pytest                                   # 181 tests, ~12 s
 .venv/bin/uvicorn camlab.server.app:app --port 8000          # -> http://localhost:8000
 ```
 
@@ -172,7 +179,7 @@ docker run -p 8000:8000 -v "$PWD/runs:/runs" ghcr.io/chubuchnyi/camlab:latest
 ```
 
 **A green tick does not mean the pipeline works.** `runs/` is measurements, not source, and is not
-committed, so a fresh checkout has no ingested clip: **34 of 169 tests skip**, and they are the
+committed, so a fresh checkout has no ingested clip: **34 of 181 tests skip**, and they are the
 ones that go through the server at real frames. What CI proves is that the geometry, the metric,
 the solver contracts and the viewer's routes hold. Whether a camera comes out *right* is the
 rendered overlay and the probe scripts, and neither runs there.

@@ -447,7 +447,10 @@ def thin(mask: np.ndarray, max_passes: int = THIN_MAX_PASSES) -> np.ndarray:
     this repo's own `MIN_SUPPORTING_MARKINGS` its errors are a max over two and are not a verdict —
     they are not allowed to decide this either way.
 
-    Costs about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip.
+    Costs **5.5 ms** a frame on `broadcast`, about 8 % of the paint stage. This line used to read
+    "about 20-50 ms a frame, which is 1.5x the residual on a 1920x1080 clip", which was the cost
+    before the sparse rewrite in the paragraph above and stayed here after it — pointing
+    optimisation attention at a function that had already been fixed.
     """
     b = np.pad((np.asarray(mask) > 0).astype(np.uint8), 1)
     if not b.any():
