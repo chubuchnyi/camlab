@@ -543,31 +543,60 @@ resolution and the decode paid once, a causal frame is 34.1 ms on `broadcast`, 1
 36.9 on `g11710897` and 30.3 on `CRO_MOR_194948` — **all four inside 25 fps on one core of a
 laptop, before the measured 2.8× of process parallelism that a buffered stream could also use.**
 
+## 11. Cropping the distance transform to the paint's bounding box: refuted
+
+`distanceTransform` is ~11 ms of the 32.4 ms paint stage — a third of it, and the biggest single
+primitive left in a causal frame. It runs over the whole frame although nothing outside the playing
+surface is ever read: the residual walks the normal from samples already restricted to the surface,
+`detect_segments` masks to it, and `centreline_pixels` takes the transform's zeros, which are the
+spine and inside it by construction. Cropping to the spine's bounding box with a margin above the
+residual's 40 px search limit is provably the same answer wherever anyone looks — and the check
+column below says so, `yes` on every clip.
+
+| clip | spine bbox | full | cropped | |
+|---|---|---|---|---|
+| `broadcast` | 65.5 % | 9.74 ms | 7.17 | 1.36× |
+| `g11710897` | 54.8 % | 9.64 | 5.93 | 1.62× |
+| `CRO_MOR_194948` | 87.8 % | 9.51 | 9.16 | 1.04× — a wash |
+| `ENG_FRA_232015` | 88.9 % | 9.51 | 9.21 | 1.03× — a wash |
+| `fan` | 100.0 % | 2.96 | 3.12 | **0.95× — slower** |
+| `stadium_a` | 100.0 % | 2.74 | 2.95 | **0.93× — slower** |
+
+**Three clips of six gain nothing or lose**, because the bounding box is 55–100 % of the frame — a
+football camera points at a football pitch and the pitch fills the picture — and the fill and the
+copy back cost more than the pixels saved. The sparse-trick rule a third time: whether a
+restriction wins is a property of the data, not of the technique.
+
+It would also have cost the strongest check this work has. `check_paint_equivalence.py` compares
+the distance map bit for bit; a cropped map is exact only INSIDE the crop and must differ outside,
+so shipping it would mean weakening that to "exact where we believe it is read" — which is the
+claim under test. A conditional 1.4× on a third of the clips is not worth trading a total check for
+a circular one.
+
+`scripts/bench_distance_crop.py` keeps it. Worth re-running on footage this repo does not have: a
+camera zoomed into one corner, or a wide overhead, would move the bounding box and could move the
+answer.
+
 ## What is left, in order
 
 The order has now turned over twice — the refit was the biggest item and is not any more — so this
 is the state after §9, not the state anyone predicted. **The paint is the majority of a causal
 frame again:** decode 6.2, paint 32.4, segments 7.4, refit 7.4 ms on `broadcast`.
 
-1. **`distanceTransform` is ~11 ms of the 32.4 ms paint stage** — a third of it, and the largest
-   single primitive left. It runs over the whole frame although nothing outside the playing-surface
-   mask is ever read. Cropping to that mask's bounding box, with a margin tied to the residual's
-   own 40 px search limit rather than to a number, is the same answer over a smaller area. Accuracy
-   is not involved at all, and `check_paint_equivalence.py` can prove it bit for bit.
-2. **The per-frame loops are serial.** See §6: the ceiling is 2.8×, not 1.0×, and the thing that
+1. **The per-frame loops are serial.** See §6: the ceiling is 2.8×, not 1.0×, and the thing that
    would cash it in is `solve_shared_centre`'s and `polish_camera`'s frame loops rather than
    `default_workers()`. `solve_carry` is a chain and cannot be. Worth ~12 % of the chain now — less
    than before the paint work — and the only item left that cannot touch accuracy at all.
-3. **The chain computes each frame's paint about 371 times a clip against a floor of 60.** Five
+2. **The chain computes each frame's paint about 371 times a clip against a floor of 60.** Five
    stages are five SUBPROCESSES, so the evidence cache dies at every boundary. That is ~10 s of a
    51 s chain. Fixing it means either running the stages in one process — which `pipeline.py`
    deliberately does not — or persisting the paint mask, which trades disk for the ~21 ms of
    `ridge_map`/`_turf`/`_surface`/`thin` and keeps the 11 ms transform. Measure before rewriting.
-4. **`merge_collinear` is O(n²) in Python, twice.** Irrelevant at 7–12 segments a frame and not
+3. **`merge_collinear` is O(n²) in Python, twice.** Irrelevant at 7–12 segments a frame and not
    irrelevant if the detector's precision work ever raises that count.
-5. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family. It
+4. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family. It
    is 11 % of `line_errors` and the last un-vectorised thing in it.
-6. **Real time, which is §10 and is not a percentage.** The causal frame already fits at half
+5. **Real time, which is §10 and is not a percentage.** The causal frame already fits at half
    resolution; the wall is SIFT and flow measures 15–36× faster at a fraction of a pixel. The test
    is the re-solve sweep, not the agreement table, because `carry` accumulates.
 
