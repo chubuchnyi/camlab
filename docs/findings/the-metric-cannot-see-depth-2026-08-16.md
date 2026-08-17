@@ -20,6 +20,14 @@ convention this whole document rests on, and it does so without using anything i
 
 ---
 
+> **Every number below is from the working half, and the held-out half has not seen any of it.**
+> WorldPose covers 89 clips from eight matches; this document used four clips from four matches,
+> which spends those matches. The other four — `ARG_CRO`, `ARG_FRA`, `BRA_KOR`, `FRA_MOR`, 41 clips
+> — are kept back, and `docs/held-out-clips.md` says why and how they may be spent. **The claim
+> that the camera is 1.2-5.0 m out and the paint prefers it that way is written down and not yet
+> confirmed on a clip that had no part in producing it.**
+
+
 ## 1. What the ground truth is, and why it was not being used
 
 WorldPose ships 89 broadcast clips of the 2022 World Cup with **per-frame `K`, `R`, `t` and radial

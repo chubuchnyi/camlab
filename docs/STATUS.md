@@ -98,6 +98,15 @@ Everything lands in `camera_manual.json`, laid over the solve, which is never re
 and its docstring holds the three discriminators that were measured and refuted. The viewer's
 controls and what each was worth: `archive/status-detail-2026-08-14.md`.
 
+## Half the ground truth is kept back
+
+WorldPose gives 89 clips from eight matches. Four matches are the working half and four —
+`ARG_CRO`, `ARG_FRA`, `BRA_KOR`, `FRA_MOR`, 41 clips — are **held out and not measured on**, because
+a claim cannot be checked against the evidence that produced it and this repo has retracted about
+thirty conclusions that were right about the clips they were measured on. Split by MATCH, since
+clips of one match share a stadium, a rig and a camera. `docs/held-out-clips.md` is the rule,
+`scripts/worldpose_split.py` is the source of truth, and spending a match is a one-way door.
+
 ## Open, and why
 
 Each of these has a findings doc with the numbers; what is here is the verdict and the pointer.
