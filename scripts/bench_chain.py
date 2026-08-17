@@ -12,11 +12,27 @@ at the copy.
 faster. The `across` figure from `verdict`/`bench_metric_ceiling` is the check; this prints the
 final camera's own worst-marking numbers so a regression cannot hide behind a wall-clock win.
 
+**And it prints a fingerprint of what it read, because the source moves.** On 2026-08-16 a
+comparison over all fourteen clips overlapped with the operator's own solve, which rewrote
+`runs/g11710897/camera_seed_used.json` at 21:01 and five other clips' files the same afternoon.
+Every row stayed internally sound — both trees run back to back from one fresh copy, and every row
+reported `0 differ`, which a changed seed could not have survived — but the rows could not be set
+beside the previous round's: the same clip read 219.4 -> 74.3 s at across 14.70 px where an hour
+earlier it read 110.3 -> 55.9 at 9.69. Same code, different input. That is the run-directory
+landmine from the other side: not a stale output, a **moving input**.
+
+Two things follow. The header carries a hash of every byte of the clip directory that was read, so
+two tables can be told apart by reading them rather than by remembering when they were taken. And
+`--snapshot DIR` takes one copy of the clip and reuses it for every later invocation, so a
+comparison is comparable by construction: point both trees, and every round, at the same snapshot.
+
     python scripts/bench_chain.py broadcast --work /tmp/camlab-bench
+    python scripts/bench_chain.py broadcast --work /tmp/w --snapshot /tmp/frozen   # comparable
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -31,6 +47,21 @@ sys.path.insert(0, str(HERE / "src"))
 from camlab.solve.pipeline import FINAL_CAMERA, STAGES  # noqa: E402
 
 
+def fingerprint(clip_dir: Path) -> str:
+    """Twelve hex digits over every byte the chain will read out of this clip directory.
+
+    Content, not mtimes: a copy has new mtimes and the same bytes, and it is the bytes that decide
+    what the chain does. About 25 ms on a 24 MB clip, which is nothing against a run measured in
+    minutes, and it is the difference between two tables that can be compared and two that only
+    look as though they can.
+    """
+    h = hashlib.sha256()
+    for path in sorted(p for p in clip_dir.rglob("*") if p.is_file()):
+        h.update(str(path.relative_to(clip_dir)).encode())
+        h.update(path.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("clip")
@@ -40,9 +71,19 @@ def main() -> int:
                     help="camera file to start from; default: the first that exists")
     ap.add_argument("--anchor", default=None)
     ap.add_argument("--workers", default=None, help="CAMLAB_WORKERS for every stage")
+    ap.add_argument("--snapshot", default=None,
+                    help="freeze the clip here on first use and read it from there afterwards, so "
+                         "rounds taken hours apart are comparable by construction")
     args = ap.parse_args()
 
     src = Path(args.source_runs or (HERE / "runs")) / args.clip
+    if args.snapshot:
+        frozen = Path(args.snapshot) / args.clip
+        if not frozen.exists():
+            frozen.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, frozen)
+        src = frozen
+
     work = Path(args.work)
     if work.exists():
         shutil.rmtree(work)
@@ -65,7 +106,9 @@ def main() -> int:
         env["CAMLAB_WORKERS"] = args.workers
 
     load = os.getloadavg()
-    print(f"{args.clip}  seed {seed}  tree {HERE}  load {load[0]:.2f} {load[1]:.2f} {load[2]:.2f}")
+    print(f"{args.clip}  seed {seed}  tree {HERE}  source {fingerprint(src)}"
+          f"{'  (frozen)' if args.snapshot else ''}  "
+          f"load {load[0]:.2f} {load[1]:.2f} {load[2]:.2f}")
     if load[0] > 1.0:
         print("  *** the machine is busy; treat every row as an upper bound ***")
 

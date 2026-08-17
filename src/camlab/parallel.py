@@ -93,15 +93,28 @@ def default_workers() -> int:
             return max(1, int(env))
         except ValueError:
             pass
-    # Two, and the reason changed on 2026-08-16 without the number changing. It used to be the
-    # measured knee of a workload that stopped scaling past 1.14×. That knee has moved: the
-    # per-frame unit now gets 2.66× on four workers and 2.82× on eight (table above).
+    # **Four, and it took three separate measurements to earn that.** It was 1 until 2026-08-13, 2
+    # from then, and it stayed at 2 through the 2026-08-16 speed work on the explicit grounds that
+    # raising it moved the whole chain by less than the noise: 94.5 s at two workers against 92.7
+    # at four and 93.2 at six, which is not a result.
     #
-    # It stays at 2 because raising it buys nothing HERE. `map_items` has exactly one caller —
-    # `verdict.judge` — and running the whole chain at 2, 4 and 6 workers gives 94.5, 92.7 and
-    # 93.2 s, which is inside the noise. Spending the 2.8× means parallelising the per-frame paint
-    # loops in the four stage scripts, and until that is done more workers only cost memory.
-    return max(1, min(2, (os.cpu_count() or 2) - 1))
+    # It is a result now. Interleaved, three rounds, `broadcast` end to end:
+    #
+    #     workers    chain            shared centre
+    #     2          55.8 57.3 56.5   13.8 14.3 14.1
+    #     4          52.8 52.9 53.6   13.3 12.9 13.0     **5.4 %, and four beats two every round**
+    #     8          57.7             14.8               oversubscribed, and worse
+    #
+    # Two things changed underneath it. `solve_shared_centre`'s slide now runs its stops through
+    # `map_items`, so there is a second caller and it is on the critical path. And the per-frame
+    # work is no longer as bandwidth-bound as it was — `ridge_map` moved ~380 bytes a pixel in
+    # August and moves ~115 now — which is exactly the lift this file predicted and could not
+    # measure at the time.
+    #
+    # Not more than four: eight is 57.7 s, worse than two. Each spawned worker starts with an empty
+    # paint cache and re-derives the frames it is handed, so past the knee the cold starts cost
+    # more than the cores return. The camera is byte-for-byte identical at 2 and at 4.
+    return max(1, min(4, (os.cpu_count() or 2) - 1))
 
 
 #: Below this many items the pool costs more than it saves — a process start is tens of

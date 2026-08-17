@@ -112,8 +112,9 @@ Measured on a laptop CPU — 11th-gen i7-11850H, no GPU in the machine:
 
 | | |
 |---|---|
-| full chain, `broadcast`, 60 frames at 1920×1080 | **62 s** (119 s before 2026-08-16) |
-| full chain, every clip in `runs/` — 14 clips, 1160 frames | **1413 s** (2891 s before), 1.79–2.24× |
+| full chain, `broadcast`, 60 frames at 1920×1080 | **51 s** (123 s before 2026-08-16) |
+| full chain, every clip in `runs/` — 14 clips, 1160 frames | **20 min** (51 min before), 1.96–2.95× |
+| one causal frame — decode, paint, lines, refit — at half resolution | **30 ms**, inside a 25 fps budget |
 | the paint stage, one 1920×1080 frame | **34 ms** (66 ms before) |
 | scoring one camera against a frame whose paint is cached | **2.1 ms** (11.8 ms before) |
 | peak memory, per-frame work | 180 MB |
