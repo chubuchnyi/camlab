@@ -86,16 +86,22 @@ def import_one(clip_id: str, *, cameras: Path = CAMERAS, report_distortion: bool
     if not npz.exists():
         raise FileNotFoundError(f"no WorldPose ground truth for {clip_id}: {npz}")
     info = ClipInfo.load(clip_id)
-    if info.first_frame != 0:
-        # Not a hard error anywhere else, but silently off-by-N is the whole failure mode here.
-        raise ValueError(f"{clip_id}: first_frame={info.first_frame}; the GT index is the SOURCE "
-                         "frame number, so an offset clip needs that added before this is right")
     d = np.load(npz)
-    n = min(info.n_frames, len(d["K"]))
-    if n < info.n_frames:
-        raise ValueError(f"{clip_id}: run holds {info.n_frames} frames, GT only {len(d['K'])}")
+    # The GT index is the SOURCE frame number, so a run that starts partway into the video reads
+    # its own frame `i` from GT row `first_frame + i`. This used to REFUSE any offset clip rather
+    # than guess, which was right while nothing produced one — and AVATAR's `new_clip_anchor.py`
+    # now does, because it scans the video for a frame PnLCalib can actually solve and ingests a
+    # window centred there. On `CRO_MOR_180400` that frame is 1320, and frame 0 gives an anchor
+    # that does not survive its own refit. Refusing the offset would mean choosing between a
+    # solvable clip and a checkable one.
+    first = int(info.first_frame)
+    n = int(info.n_frames)
+    if first + n > len(d["K"]):
+        raise ValueError(f"{clip_id}: run holds frames {first}..{first + n - 1} of the source, "
+                         f"GT only has {len(d['K'])}")
 
-    K, R, t, k = d["K"][:n], d["R"][:n], d["t"][:n], d["k"][:n]
+    sl = slice(first, first + n)
+    K, R, t, k = d["K"][sl], d["R"][sl], d["t"][sl], d["k"][sl]
     rot = np.stack([cv2.Rodrigues(np.ascontiguousarray(r))[0].ravel() for r in R])
     pos = np.einsum("nji,nj->ni", R, -t)              # C = -Rᵀ t, per frame
 
@@ -115,7 +121,8 @@ def import_one(clip_id: str, *, cameras: Path = CAMERAS, report_distortion: bool
         focal_px=fx, position=pos, rotation=rot, cx=cx, cy=cy, notes=notes,
         distortion_k=np.asarray(k, float).round(6).tolist(),
     )
-    return {"clip": clip_id, "frames": n, "focal": (float(fx.min()), float(fx.max())),
+    return {"clip": clip_id, "frames": n, "first_frame": first,
+            "focal": (float(fx.min()), float(fx.max())),
             "cx": cx, "cy": cy, "cxcy_spread_px": spread,
             "height_m": (float(pos[:, 2].min()), float(pos[:, 2].max())),
             "distortion_px": shift}
