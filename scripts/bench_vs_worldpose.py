@@ -85,12 +85,24 @@ def compare(clip_id: str, camera_name: str, *, cameras: Path = CAMERAS, every: i
     d = np.load(gt_path(clip_id, cameras))
     pts = _pitch_samples()
 
+    # The GT index is the SOURCE frame number and a run may start partway into the video, so
+    # camlab's frame `i` must be read from GT row `first + i`. Getting this wrong is silent and
+    # enormous: it reported camlab as 42 deg and 4275 px from the truth on `CRO_MOR_180400`, on a
+    # camera the paint scores at 2.54 px. The tell was that the error tracked `first_frame`
+    # exactly — 0.31-0.87 deg on every clip that starts at 0, and 5.7-59.5 deg on every clip that
+    # does not, rising with the offset.
+    first = int(info.first_frame)
+    if first + info.n_frames > len(d["K"]):
+        raise ValueError(f"{clip_id}: run holds source frames {first}..{first + info.n_frames - 1}, "
+                         f"GT has {len(d['K'])}")
+
     rows = []
-    for i in range(0, min(info.n_frames, len(d["K"])), max(1, every)):
+    for i in range(0, info.n_frames, max(1, every)):
         f = float(cam["focal_px"][i])
         if not f > 0:
             continue
-        got = compare_frame(d["K"][i], d["R"][i], d["t"][i], d["k"][i], f,
+        g = first + i
+        got = compare_frame(d["K"][g], d["R"][g], d["t"][g], d["k"][g], f,
                             cam["rotation"][i], cam["position"][i],
                             float(cam["cx"]), float(cam["cy"]), info.width, info.height, pts)
         if got is not None:
