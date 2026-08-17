@@ -1,55 +1,70 @@
-# Making it fast again: the chain is 2.05× and four of the last day's conclusions were wrong
+# Making it fast again: the chain is 2.59× and four of the last day's conclusions were wrong
 
 Measured 2026-08-16 on the same laptop (i7-11850H, 16 threads, no GPU), against
 `docs/findings/making-it-fast-2026-08-13.md`, which is the only performance work this repo had
 done and which this doc contradicts in four places.
 
-**The headline: every clip in `runs/` — fourteen of them, 1160 frames — goes 2891 s to 1413 s,
-2.05×, per clip 1.79× to 2.24×, and every camera file it writes is byte for byte the one that was
-there before.** The table is below; read the warning about measurement sessions with it, because
-it cost this document its first set of numbers.
+**The headline: every clip in `runs/` — fourteen of them, 1160 frames — goes 3063 s to 1185 s,
+2.59×, per clip 1.96× to 2.95×, and every camera file it writes is byte for byte the one that was
+there before.** Fifty-one minutes of wall clock down to twenty. The table is below; read the
+warning about measurement sessions with it, because it cost this document its first set of numbers.
 
-Per-stage, on `broadcast`, all in one sitting:
+**And a causal frame is now inside the real-time budget.** Decode, paint, segments and refit —
+everything needed to place a camera on a frame given the one before it — measured on a quiet
+machine against the 40 ms a 25 fps stream allows:
 
-| clip | frames × size | segments/frame | before | now | |
-|---|---|---|---|---|---|
-| `broadcast` | 60 × 1920×1080 | 9 | 118.6 s | **62.1 s** | 1.91× |
-| `CRO_MOR_194948` | 120 × 1920×1080 | 12 | 273.4 s | **135.2 s** | 2.02× |
-| `fan` | 120 × 1080×608 | 7 | 189.9 s | **88.2 s** | 2.15× |
+| clip | full | ×0.5 | ×0.35 | SIFT, one pair |
+|---|---|---|---|---|
+| `broadcast` 1920×1080 | 53.3 ms | **30.3** | 24.5 | 330 |
+| `fan` 1080×608 | **29.0** | 16.8 | 15.1 | 104 |
+| `g11710897` 1080×1920 | 69.3 | **30.7** | 36.8 | 404 |
+| `CRO_MOR_194948` 1920×1080 | 60.1 | **29.0** | 27.9 | 387 |
+
+Every clip fits at half resolution, and `fan` fits at full. What does not fit is SIFT, at nine
+budgets for a single pair — see §10, where flow does the same job in 3.4–11.7 ms.
 
 **Then every clip in `runs/`, and the camera files compared BYTE FOR BYTE.** Not "the metric
 agrees" — the five JSON files each chain writes, `cmp`'d. If the bytes are the same the accuracy
-cannot have moved, and nothing weaker was going to settle it. Run twice: once after §1–§5, and
-again after the two cache repairs in §7 and §8.
+cannot have moved, and nothing weaker was going to settle it. Run three times: after §1–§5, after
+the two cache repairs in §7–§8, and after §9 on a machine that was finally quiet.
 
-| clip | frames | before | after §1–§5 | | after §7–§8 | | camera files |
-|---|---|---|---|---|---|---|---|
-| `14604731_1080_1920_30fps` | 120 | 261.4 s | 149.4 | 1.74× | **133.0** | 1.97× | 5/5 identical |
-| `14604731_..._Copy` | 180 | 441.4 | 245.7 | 1.78× | **213.3** | 2.07× | 5/5 identical |
-| `broadcast` | 60 | 118.6 | 71.2 | 1.70× | **62.1** | 1.91× | 5/5 identical |
-| `CRO_MOR_194948` | 120 | 273.4 | 154.1 | 1.83× | **135.2** | 2.02× | 5/5 identical |
-| `demo_14604680` | 60 | 44.0 | 27.3 | 1.62× | **24.2** | 1.82× | 5/5 identical |
-| `ENG_FRA_232015` | 180 | 674.6 | 379.0 | 1.82× | **301.8** | 2.24× | 5/5 identical |
-| `fan` | 120 | 189.9 | 143.8 | 1.32× | **88.2** | **2.15×** | 5/5 identical |
-| `g11710897` | 40 | 110.3 | 65.1 | 1.75× | **55.9** | 1.97× | 5/5 identical |
-| `g14604660` | 40 | 77.6 | 49.3 | 1.62× | **43.4** | 1.79× | 5/5 identical |
-| `g15449383` | 40 | 138.3 | 108.0 | 1.30× | **72.4** | **1.91×** | 5/5 identical |
-| `MOR_POR_181952` | 60 | 92.0 | 60.8 | 1.55× | **49.6** | 1.85× | 5/5 identical |
-| `NET_ARG_225042` | 60 | 136.6 | 79.4 | 1.75× | **70.8** | 1.93× | 5/5 identical |
-| `stadium_a` | 60 | 53.6 | 37.4 | 1.45× | **25.9** | 2.07× | 5/5 identical |
-| `wp_194948` | 120 | 279.5 | 157.9 | 1.80× | **137.0** | 2.04× | 5/5 identical |
-| **all fourteen** | **1160** | **2891.2 s** | 1728.4 | 1.69× | **1412.8 s** | **2.05×** | **70/70 identical** |
+| clip | frames | before | §1–§5 | | §7–§8 | | **§9, quiet machine** | | camera files |
+|---|---|---|---|---|---|---|---|---|---|
+| `14604731_1080_1920_30fps` | 120 | 261.1 s | 149.4 | 1.74× | 133.0 | 1.97× | **105.0** | 2.49× | 5/5 identical |
+| `14604731_..._Copy` | 180 | 430.7 | 245.7 | 1.78× | 213.3 | 2.07× | **162.1** | 2.66× | 5/5 identical |
+| `broadcast` | 60 | 123.0 | 71.2 | 1.70× | 62.1 | 1.91× | **50.8** | 2.42× | 5/5 identical |
+| `CRO_MOR_194948` | 120 | 276.1 | 154.1 | 1.83× | 135.2 | 2.02× | **103.8** | 2.66× | 5/5 identical |
+| `demo_14604680` | 60 | 44.8 | 27.3 | 1.62× | 24.2 | 1.82× | **22.3** | 2.01× | 5/5 identical |
+| `ENG_FRA_232015` | 180 | 668.0 | 379.0 | 1.82× | 301.8 | 2.24× | **226.9** | 2.94× | 5/5 identical |
+| `fan` | 120 | 197.1 | 143.8 | 1.32× | 88.2 | 2.15× | **85.9** | 2.29× | 5/5 identical |
+| `g11710897` | 40 | 219.4 | 65.1 | 1.75× | 55.9 | 1.97× | **74.3** | 2.95× | 5/5 identical |
+| `g14604660` | 40 | 84.4 | 49.3 | 1.62× | 43.4 | 1.79× | **37.6** | 2.24× | 5/5 identical |
+| `g15449383` | 40 | 148.9 | 108.0 | 1.30× | 72.4 | 1.91× | **76.1** | 1.96× | 5/5 identical |
+| `MOR_POR_181952` | 60 | 113.4 | 60.8 | 1.55× | 49.6 | 1.85× | **49.5** | 2.29× | 5/5 identical |
+| `NET_ARG_225042` | 60 | 141.9 | 79.4 | 1.75× | 70.8 | 1.93× | **58.3** | 2.43× | 5/5 identical |
+| `stadium_a` | 60 | 55.3 | 37.4 | 1.45× | 25.9 | 2.07× | **25.5** | 2.17× | 5/5 identical |
+| `wp_194948` | 120 | 299.1 | 157.9 | 1.80× | 137.0 | 2.04× | **106.5** | 2.81× | 5/5 identical |
+| **all fourteen** | **1160** | **3063.2 s** | 1728.4 | 1.69× | 1412.8 | 2.05× | **1184.6 s** | **2.59×** | **70/70 identical** |
 
-**Seventy camera files, none of them one byte different**, on both rounds. And once with a
+**Seventy camera files, none of them one byte different**, on every round. And once with a
 non-default scale ladder, because everything above runs at the shipped `(2, 4, 7)`: `g11710897`
 under `CAMLAB_RIDGE_SCALES=2,4,7,14,28` is 148.4 → 82.3 s, 1.80×, 5/5 identical.
 
-**The spread is the finding, and it moved.** After §1–§5 it was 1.30× to 1.83×, and the two clips
-at the bottom — `fan` and `g15449383` — were the two with many unfittable frames, so `solve_selfheal`
-dominated their runs and that was the one stage untouched. §7 fixed exactly that, and the spread is
-now **1.79× to 2.24×, with no outliers left**: `fan` went 1.32× → 2.15×, `g15449383` 1.30× → 1.91×.
-Reading the mean would have said "1.69×, good"; reading the spread said where the next hour
-belonged.
+**Read the `before` column with its own warning.** It is re-measured in each round, which is the
+only way the ratios can be trusted — and six clips' SOURCE moved between the second round and the
+third, because the operator was solving on the same `runs/` directory. `g11710897` reads
+219.4 → 74.3 s at across 14.70 px in the third round where the second read 110.3 → 55.9 at 9.69 px:
+same code, different seed, written at 21:01 by a chain that was not this one. Each row is still
+internally sound — both trees run back to back from the same fresh copy, and every row reports
+`0 differ`, which a changed seed could not have survived — but a row from one round cannot be put
+beside a row from another. That is the run-directory landmine from the other side: not a stale
+output, **a moving input**.
+
+**The spread is the finding, and it moved twice.** After §1–§5 it was 1.30× to 1.83×, and the two
+clips at the bottom — `fan` and `g15449383` — were the two with many unfittable frames, so
+`solve_selfheal` dominated them and that was the one stage untouched. §7 went at exactly those.
+After §9 the range is 1.96× to 2.95×. Reading the mean would have said "1.69×, good" and stopped;
+reading the spread said where the next two hours belonged, both times.
 
 **Seventy camera files, none of them one byte different.** And once more with a non-default scale
 ladder, because everything above runs at the shipped `(2, 4, 7)`: `g11710897` under
@@ -453,25 +468,137 @@ frame is final**, which is exact because every frame is assigned exactly once.
 | `g11710897` | 64.7 | 58.2 | 16.8 → 15.3 | 5/5 identical |
 | `g14604660` | 50.1 | 44.8 | | 5/5 identical |
 
+## 9. Seventeen markings against every segment in one pass, not seventeen
+
+With the paint halved and the caches repaired, `line_errors` is **82–93 % of a refit**, and a refit
+is the biggest item left in a causal frame — the only one that does not get cheaper with
+resolution, because it costs per segment and per LM iteration rather than per pixel. Split with a
+wall clock: `_candidates` 50–55 %, the projection loop 23 %, `clip_to_image` 11 %,
+`_assign_in_order` 11 %.
+
+**The ceiling was measured before anything was written**, which is the only reason this was worth
+doing. `_candidates` costs 5.8 µs for one marking and 97.9 µs for the seventeen a frame has; the
+identical arithmetic over seventeen times the segments in ONE call costs 7.1 µs. **93 % of it was
+interpreter dispatch and the ceiling was 13.9×.** The arrays are (17, 12) and fit in L1 twice over,
+so nothing is computed faster — it is asked for once instead of seventeen times.
+
+**And it is not the same conclusion as §5.** Vectorising over SEGMENTS is a wash below ten a frame,
+because the segment count is set by the detector and the threshold. The marking count is fixed by
+the pitch model at seventeen and depends on nothing, so this multiplier is a property of the
+geometry rather than of the data.
+
+| | before | after | |
+|---|---|---|---|
+| `line_errors`, `broadcast` 9 segments | 0.756 ms | **0.347** | 2.18× |
+| `line_errors`, `fan` 7 segments | 0.963 | **0.385** | 2.50× |
+| `line_errors`, `CRO_MOR_194948` 12 segments | 1.286 | **0.431** | 2.98× |
+| `refit_frame_lm`, `broadcast` | 49.0 ms | **25.3** | 1.94× |
+| `refit_frame_lm`, `fan` | 44.7 | **23.1** | 1.94× |
+| `refit_frame_lm`, `CRO_MOR_194948` | 67.5 | **29.6** | 2.28× |
+
+Three traps, all probed against the scalar form before a line changed, because this function
+decides correspondence and the repo compares its metric with `==`: `np.linalg.norm(d, axis=1)` is
+**not** the 1-D norm (use `sqrt(_rowdot(d, d))`); a flattened `_rowdot` does **not** reproduce a
+matrix-vector product (use `np.matmul(F, U[..., None])`); but a stacked `(M, 2, 3) @ (3, 3)` **does**
+equal the per-marking one, and a stacked `(M, 2, 2) @ (M, 2)` **does** equal the per-stack matvec.
+14 of 14 clips, 20 of 20 camera+frame combinations, identical.
+
+A by-product worth keeping: across the seven evaluations of one Jacobian block the correspondence
+**never moves** — 110 blocks of 110 on three clips. An analytic Jacobian would therefore be
+legitimate. It also turned out to be unnecessary: `line_errors` was the cost, not the number of
+evaluations.
+
+## 10. The real-time wall is one library call, not the problem
+
+SIFT is 330–404 ms a pair, **nine times the whole 40 ms budget for a single frame**, and it is the
+only thing in a causal frame that makes real time arithmetically impossible. It is also being asked
+a question it was not built for: SIFT is a WIDE-BASELINE descriptor, and this repo's own
+measurement says consecutive frames at 30 fps turn by **0.06 degrees**. Lucas-Kanade is the
+small-motion instrument.
+
+`goodFeaturesToTrack` + pyramidal LK + a forward-backward check + the same `USAC_MAGSAC`
+`measure_pairs` uses, on real consecutive pairs:
+
+| clip | flow @1.0 | flow @0.5 | SIFT | agreement with SIFT over the whole frame, px (median / p95 / worst) |
+|---|---|---|---|---|
+| `broadcast` | 31.2 ms | **10.8** | 340.1 | 0.313 / 0.955 / 3.214 |
+| `fan` | 12.7 | **3.4** | 123.7 | 0.360 / 1.002 / 7.765 |
+| `g11710897` | 29.2 | **11.7** | 341.0 | 0.018 / 0.062 / 0.192 |
+| `CRO_MOR_194948` | 26.7 | **8.5** | 333.8 | 0.118 / 0.411 / 2.035 |
+
+**15× to 36×, agreeing to a fraction of a pixel in the median** on a measurement whose own accuracy
+target is 2–4 px. What is compared is deliberately not the matrices — two homographies can differ
+in every entry and agree everywhere it matters — but where each sends a grid of points, read in
+pixels, which is the unit the rest of this repo argues in.
+
+**Three things this does not say.** It is not a proposal to swap the detector: `solve_carry` is
+built on these maps and every camera in `runs/` descends from them, so the test is #17's re-solve
+sweep and not an agreement table. The worst pair disagrees by 2 to 7.8 px and a carry chain
+ACCUMULATES its maps over up to sixty frames, so the tail is what would have to be measured. And
+flow finds fewer inliers than SIFT — 357–2000 against 1658–2850 — which on a clip with less texture
+may not hold at all.
+
+What it does say is that the real-time question has an arithmetic answer. With flow at half
+resolution and the decode paid once, a causal frame is 34.1 ms on `broadcast`, 17.9 on `fan`,
+36.9 on `g11710897` and 30.3 on `CRO_MOR_194948` — **all four inside 25 fps on one core of a
+laptop, before the measured 2.8× of process parallelism that a buffered stream could also use.**
+
+## 11. Cropping the distance transform to the paint's bounding box: refuted
+
+`distanceTransform` is ~11 ms of the 32.4 ms paint stage — a third of it, and the biggest single
+primitive left in a causal frame. It runs over the whole frame although nothing outside the playing
+surface is ever read: the residual walks the normal from samples already restricted to the surface,
+`detect_segments` masks to it, and `centreline_pixels` takes the transform's zeros, which are the
+spine and inside it by construction. Cropping to the spine's bounding box with a margin above the
+residual's 40 px search limit is provably the same answer wherever anyone looks — and the check
+column below says so, `yes` on every clip.
+
+| clip | spine bbox | full | cropped | |
+|---|---|---|---|---|
+| `broadcast` | 65.5 % | 9.74 ms | 7.17 | 1.36× |
+| `g11710897` | 54.8 % | 9.64 | 5.93 | 1.62× |
+| `CRO_MOR_194948` | 87.8 % | 9.51 | 9.16 | 1.04× — a wash |
+| `ENG_FRA_232015` | 88.9 % | 9.51 | 9.21 | 1.03× — a wash |
+| `fan` | 100.0 % | 2.96 | 3.12 | **0.95× — slower** |
+| `stadium_a` | 100.0 % | 2.74 | 2.95 | **0.93× — slower** |
+
+**Three clips of six gain nothing or lose**, because the bounding box is 55–100 % of the frame — a
+football camera points at a football pitch and the pitch fills the picture — and the fill and the
+copy back cost more than the pixels saved. The sparse-trick rule a third time: whether a
+restriction wins is a property of the data, not of the technique.
+
+It would also have cost the strongest check this work has. `check_paint_equivalence.py` compares
+the distance map bit for bit; a cropped map is exact only INSIDE the crop and must differ outside,
+so shipping it would mean weakening that to "exact where we believe it is read" — which is the
+claim under test. A conditional 1.4× on a third of the clips is not worth trading a total check for
+a circular one.
+
+`scripts/bench_distance_crop.py` keeps it. Worth re-running on footage this repo does not have: a
+camera zoomed into one corner, or a wide overhead, would move the bounding box and could move the
+answer.
+
 ## What is left, in order
 
-1. **`shared centre` is 129 paint computations against a floor of 60.** Its `segs()` pass over
-   every frame is structurally separate from the search that follows, and the search's own misses
-   are already bounded by `hold_frames`. That one needs the stage restructured, not a loop fused.
-2. **SIFT is still the biggest single thing in `carry`** — 60 frames at 183 ms, and OpenCV already
-   spreads it over ten cores. The cross-stage recomputation is gone; what is left is the cost of
-   the method. Making it cheaper means fewer features or a cheaper detector, which are accuracy
-   knobs, not performance ones.
-3. **The per-frame loops are serial.** See §6: the ceiling is 2.8×, not 1.0×, and the thing that
-   would cash it in is those loops rather than `default_workers()`.
-4. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family, run
-   about 105 times per LM refit. It is what is left inside `line_errors` after §4 and §5. Measure
-   it with a wall clock, not a profile — see the second warning.
-5. **The paint stage is 34 ms and about half of it is `distanceTransform` and `thin`.** Both are
-   OpenCV or already sparse, and `distanceTransform` is computed over the whole frame although
-   nothing outside the surface mask is ever read. Getting past this means changing what is asked,
-   which was the 2026-08-13 document's closing sentence and is still true — it was just five
-   functions early.
+The order has now turned over twice — the refit was the biggest item and is not any more — so this
+is the state after §9, not the state anyone predicted. **The paint is the majority of a causal
+frame again:** decode 6.2, paint 32.4, segments 7.4, refit 7.4 ms on `broadcast`.
+
+1. **The per-frame loops are serial.** See §6: the ceiling is 2.8×, not 1.0×, and the thing that
+   would cash it in is `solve_shared_centre`'s and `polish_camera`'s frame loops rather than
+   `default_workers()`. `solve_carry` is a chain and cannot be. Worth ~12 % of the chain now — less
+   than before the paint work — and the only item left that cannot touch accuracy at all.
+2. **The chain computes each frame's paint about 371 times a clip against a floor of 60.** Five
+   stages are five SUBPROCESSES, so the evidence cache dies at every boundary. That is ~10 s of a
+   51 s chain. Fixing it means either running the stages in one process — which `pipeline.py`
+   deliberately does not — or persisting the paint mask, which trades disk for the ~21 ms of
+   `ridge_map`/`_turf`/`_surface`/`thin` and keeps the 11 ms transform. Measure before rewriting.
+3. **`merge_collinear` is O(n²) in Python, twice.** Irrelevant at 7–12 segments a frame and not
+   irrelevant if the detector's precision work ever raises that count.
+4. **`_assign_in_order` is a pure-Python DP** over (markings + 1) × (segments + 1) per family. It
+   is 11 % of `line_errors` and the last un-vectorised thing in it.
+5. **Real time, which is §10 and is not a percentage.** The causal frame already fits at half
+   resolution; the wall is SIFT and flow measures 15–36× faster at a fraction of a pixel. The test
+   is the re-solve sweep, not the agreement table, because `carry` accumulates.
 
 ## Corrected in the repo by this work
 

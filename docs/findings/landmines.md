@@ -118,6 +118,16 @@ Ordered by how much they cost.
   `straight_markings` (6300 calls, 5.1 s, and it held up end to end). **A profile is trustworthy
   for ranking functions with similar call counts and misleading across them**; confirm with a wall
   clock on the function itself before rewriting it.
+- **A run directory can go stale under a reader AND move under a writer, and the second is harder
+  to see.** A comparison over all fourteen clips overlapped with the operator's own solve, which
+  rewrote `runs/g11710897/camera_seed_used.json` at 21:01 and touched five other clips the same
+  afternoon. Every row of the table stayed internally sound — both trees ran back to back from one
+  fresh copy, and every row reported `0 differ`, which a changed seed could not have survived — but
+  the rows could not be set beside the previous round's: **the same clip read 219.4 → 74.3 s at
+  across 14.70 px where an hour earlier it read 110.3 → 55.9 at 9.69**. Same code, different input,
+  and nothing in either table said so. A benchmark over a directory somebody else writes to must
+  **freeze what it reads and print a fingerprint of it** — `bench_chain.py --snapshot`, and a hash
+  of every byte in the header of every row.
 - **The same commit measures 155.3 s and 119.7 s on the same machine on the same clip.** A 30 %
   spread on background load. A stage-by-stage progression assembled as each change lands, over two
   hours, is not a progression — it is a record of the machine's mood, and the first version of

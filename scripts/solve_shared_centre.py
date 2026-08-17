@@ -37,8 +37,56 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from camlab.camera_file import degenerate_from, write_camera  # noqa: E402
 from camlab.measure.lines import detect_segments  # noqa: E402
 from camlab.measure.residual import frame_evidence_cached, frame_residual, hold_frames  # noqa: E402
+from camlab.parallel import map_items  # noqa: E402
 from camlab.runs import ClipInfo  # noqa: E402
 from camlab.solve.refit import refit_frame_lm  # noqa: E402
+
+#: Detected segments per frame, keyed on the frame's path. They do not depend on the camera, and
+#: the search asks for the same probe frames at every one of its ~26 stops. Module level so it
+#: survives across `score_stop` calls — in one process that is every stop, and in a pool it is
+#: every stop a given worker is handed.
+_SEGS: dict[str, np.ndarray] = {}
+
+
+def score_stop(payload):
+    """One stop of the slide: refit every probe frame at this centre and score them there.
+
+    Module level, and taking one picklable argument, because `parallel.map_items` sends it to a
+    fresh interpreter — a closure raises `PicklingError` at submit time rather than silently
+    running serially, which is the right way round.
+
+    The stops are independent of each other: each refits the same probe frames at a different point
+    on the line and reports what the paint says. Only the SWEEPS are sequential, because each
+    recentres on the previous one's winner. So this is 17 stops a sweep plus 9 on the refinement
+    that can run at once, and by `cProfile` they were 7.2 s of a 16.1 s stage.
+
+    **`_SEGS` is module level and that is the whole design, not an implementation detail.** The
+    segments of a probe frame do not depend on the camera, so they are detected once and reused by
+    every stop that lands in the same process — which in the serial fallback is all of them, and in
+    a pool is every stop that worker gets. The first version of this rebuilt the cache per call and
+    made the SERIAL path 3 s slower on `broadcast` by re-running Hough 26 times over the probe set:
+    a parallel change that lost more to a lost cache than it won from the cores, and it was only
+    visible because the chain was measured and not just the stage.
+
+    Each worker also asks the paint cache to hold the probe set, exactly as the serial version
+    does. The search scores the same handful of frames over and over, and a cache shorter than the
+    set misses every time — 114 ms a residual against 29, which is what put `hold_frames` here.
+    """
+    info, src, cx, cy, centre, probe = payload
+    hold_frames(len(probe) + 2)
+    worst = []
+    for i in probe:
+        key = str(info.frame_path(i))
+        if key not in _SEGS:
+            d, s = frame_evidence_cached(info.frame_path(i))[:2]
+            _SEGS[key] = detect_segments(d, s, method="hough")
+        r = refit_frame_lm(_SEGS[key], src["focal_px"][i],
+                           np.asarray(src["rotation"][i], float), centre,
+                           info.width, info.height, cx, cy, free_position=False)
+        worst.append(frame_residual(info.frame_path(i), r.focal_px, r.rotation, r.position,
+                                    frame=i, cx=cx, cy=cy).worst_line_px)
+    w = np.asarray(worst)
+    return float(np.nanmedian(w)), int(np.nansum(w < 20.0)), len(w)
 
 
 def fit_line(positions: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -119,6 +167,16 @@ def main() -> None:
     # frames here: 114 ms a residual against 29, and this stage is 41 % of the chain.
     held = hold_frames(len(probe) + 2)
     print(f"   holding {held} frames' paint for the {len(probe)} probe frames")
+
+    def sweep(ts):
+        """Every stop of one sweep, in order, on as many processes as are worth it.
+
+        `map_items` falls back to a plain loop for one worker or a short list, so a sweep of three
+        stops does not pay for a pool. `ordered=True` because the printed table is read down the
+        column and a stop's `t` is not carried in its result.
+        """
+        return map_items(score_stop,
+                         [(info, src, cx, cy, centroid + float(t) * direction, probe) for t in ts])
     # The span has to come from the data. A solve with three hand anchors strings out over 21 m and
     # a fixed +/-6 m covers it; the anchor-free one strings out over 98 m, and the same +/-6 m
     # returned its minimum AT THE EDGE — a boundary answer dressed up as an optimum, 7.06 px where
@@ -133,8 +191,8 @@ def main() -> None:
               f"scoring {len(probe)} frames at each stop:")
         print(f'   {"t (m)":>7} {"median":>8} {"under 20":>10}')
         best = None
-        for t in np.arange(-span, span + 1e-9, step):
-            med, u20, tot = score(solve_at(centroid + t * direction, probe))
+        stops = list(np.arange(-span, span + 1e-9, step))
+        for t, (med, u20, tot) in zip(stops, sweep(stops), strict=True):
             print(f"   {t:7.2f} {med:8.2f} {u20:7d}/{tot}")
             if best is None or med < best[0]:
                 best = (med, float(t))
@@ -150,8 +208,8 @@ def main() -> None:
     # Refine around the winner at a quarter of the step, since the coarse grid can only ever land
     # the answer within half a step of the truth.
     fine = None
-    for t in np.arange(best[1] - step, best[1] + step + 1e-9, step / 4):
-        med, _u, _tot = score(solve_at(centroid + t * direction, probe))
+    stops = list(np.arange(best[1] - step, best[1] + step + 1e-9, step / 4))
+    for t, (med, _u, _tot) in zip(stops, sweep(stops), strict=True):
         if fine is None or med < fine[0]:
             fine = (med, float(t))
     med, t_best = fine if fine[0] <= best[0] else best
