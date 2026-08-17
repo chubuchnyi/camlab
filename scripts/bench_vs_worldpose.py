@@ -93,8 +93,8 @@ def compare(clip_id: str, camera_name: str, *, cameras: Path = CAMERAS, every: i
     # does not, rising with the offset.
     first = int(info.first_frame)
     if first + info.n_frames > len(d["K"]):
-        raise ValueError(f"{clip_id}: run holds source frames {first}..{first + info.n_frames - 1}, "
-                         f"GT has {len(d['K'])}")
+        raise ValueError(f"{clip_id}: run holds source frames "
+                         f"{first}..{first + info.n_frames - 1}, GT has {len(d['K'])}")
 
     rows = []
     for i in range(0, info.n_frames, max(1, every)):
