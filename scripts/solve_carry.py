@@ -59,6 +59,11 @@ def main() -> None:
     ap.add_argument("--free-position", action="store_true",
                     help="let the refit move the camera centre too. Off by default: the carry's "
                          "own derivation assumes a fixed centre, and freeing it is what drifted")
+    ap.add_argument("--no-carry", action="store_true",
+                    help="measure no motion at all and let every frame refit from its neighbour's "
+                         "camera. THE CONTROL, not a mode to solve in: a causal tracker measured "
+                         "the homography to be worth nothing on seven clips, and this asks the "
+                         "same question of the shipped chain instead of a script resembling it")
     args = ap.parse_args()
 
     t0 = time.time()
@@ -134,10 +139,14 @@ def main() -> None:
         print("   NO HAND ANCHOR IS BEING USED — every anchor is refitted from the seed's "
               "own pose. If you aimed one in the viewer, the paint preferred the solve to it.")
 
-    pairs = measure_pairs({f: info.frame_path(f) for f in range(n)}, gaps=(1,))
-    h_of = {(p.i, p.j): p for p in pairs}
-    print(f"   {len(pairs)}/{n - 1} consecutive pairs, median reprojection "
-          f"{np.median([p.median_px for p in pairs]):.2f} px")
+    if args.no_carry:
+        pairs, h_of = [], {}
+        print("   --no-carry: no motion measured, every frame refits from its neighbour's camera")
+    else:
+        pairs = measure_pairs({f: info.frame_path(f) for f in range(n)}, gaps=(1,))
+        h_of = {(p.i, p.j): p for p in pairs}
+        print(f"   {len(pairs)}/{n - 1} consecutive pairs, median reprojection "
+              f"{np.median([p.median_px for p in pairs]):.2f} px")
 
     fit = refit_frame if args.nelder_mead else refit_frame_lm
     print("   refit: " + ("Nelder-Mead on the scalar objective" if args.nelder_mead

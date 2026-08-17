@@ -71,6 +71,10 @@ def main() -> int:
                     help="camera file to start from; default: the first that exists")
     ap.add_argument("--anchor", default=None)
     ap.add_argument("--workers", default=None, help="CAMLAB_WORKERS for every stage")
+    ap.add_argument("--first-stage-arg", action="append", default=[],
+                    help="extra argument appended to the FIRST stage only, repeatable. For asking "
+                         "the shipped chain a question a flag answers — `--first-stage-arg "
+                         "--no-carry` runs the whole chain with the motion measurement removed.")
     ap.add_argument("--snapshot", default=None,
                     help="freeze the clip here on first use and read it from there afterwards, so "
                          "rounds taken hours apart are comparable by construction")
@@ -120,6 +124,7 @@ def main() -> int:
             cmd += ["--seed", seed]
             if args.anchor:
                 cmd += ["--anchor", args.anchor]
+            cmd += args.first_stage_arg
         cmd += extra
         t = time.perf_counter()
         got = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=str(HERE))

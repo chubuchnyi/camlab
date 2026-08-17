@@ -1,5 +1,17 @@
 # The carry buys nothing when every frame is refitted — and flow cannot replace SIFT
 
+> **Corrected the same day — the second half does NOT transfer to the shipped chain.** Asked of
+> `solve_carry` itself with `--no-carry`, over every clip, the answer is six clips better, two a
+> wash and **two clearly worse** — `ENG_FRA_232015` +0.65 px and `fan` +0.41, which are the two
+> clips where the camera MOVES. And the focal moves 6.6 % on `fan`, up to 23 % on a clip `across`
+> cannot judge at all — the focal/distance degeneracy, which the carry constrains and the paint
+> cannot reward. Worse, the judge is the paint, which this repo has since measured to PREFER a camera
+> 1.2-5.0 m out of place. **The stage stays.** See
+> `the-carry-does-not-survive-the-shipped-chain-2026-08-17.md`.
+>
+> The FIRST half stands and is unaffected: optical flow cannot replace SIFT, and it fails on
+> accumulation exactly as this document predicted it had to be tested for.
+
 Measured 2026-08-17, from a question about real time and answered by a control nobody had run.
 
 Two results, and the second is the one that matters:
