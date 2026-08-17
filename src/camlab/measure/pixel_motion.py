@@ -179,6 +179,91 @@ def measure_pairs(frame_paths: dict[int, object], gaps=DEFAULT_GAPS,
     return out
 
 
+#: Corners tracked per frame. SIFT returns 1658–2850 inliers on these clips and flow 357–2000, so
+#: this is set to keep the same order rather than to be generous: a homography from a few hundred
+#: well-spread points is not improved by a few thousand.
+FLOW_CORNERS = 2000
+
+#: The forward-backward gate, in pixels. A point is kept only if tracking it to the next frame and
+#: back lands it where it started. This is what replaces SIFT's ratio test, and it is not optional:
+#: without it a point on a repeating stand pattern or an advertising hoarding drifts ALONG the
+#: pattern and the homography follows it.
+FLOW_BACK_PX = 1.0
+
+
+def flow_pairs(frame_paths: dict[int, object], gaps=(1,), max_corners: int = FLOW_CORNERS,
+               scale: float = 1.0) -> list[PairMotion]:
+    """`measure_pairs`' answer from sparse optical flow instead of SIFT. **Not a replacement yet.**
+
+    Same signature, same `PairMotion`, same MAGSAC and the same gates, so the two can be swapped in
+    one place and compared like for like.
+
+    **Why it can be asked at all.** SIFT is a wide-baseline descriptor and consecutive frames at
+    30 fps turn by 0.06 degrees — this repo measured that itself, in
+    `findings/the-focal-from-pixels-needs-seconds-not-frames-2026-08-14.md`, as the reason the long
+    gaps exist. Lucas-Kanade is the small-motion instrument, and on gap-1 pairs it agrees with SIFT
+    to a median of **0.018–0.360 px over the whole frame** at 3.4–11.7 ms against 104–341.
+
+    **Why it is not shipped.** `solve_carry` ACCUMULATES these maps over up to sixty frames, and the
+    worst pair measured disagrees by 2–7.8 px. The median is not the number that matters; the
+    accumulation is, and that is what `scripts/track_causal.py` measures. Every camera in `runs/`
+    descends from `measure_pairs`, so replacing it re-solves the repo, and the test for that is
+    #17's re-solve sweep rather than an agreement table.
+
+    `gaps` is honoured but flow is only defensible at gap 1: over ten frames the motion leaves the
+    window a pyramidal tracker searches, and the forward-backward gate then throws the pair away
+    rather than lying about it — which is the right failure, and still a failure.
+    """
+    import cv2
+
+    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+    win = (21, 21)
+    cache: dict[int, np.ndarray] = {}
+
+    def gray(f: int):
+        if f not in cache:
+            img = cv2.imread(str(frame_paths[f]), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                raise FileNotFoundError(frame_paths[f])
+            cache[f] = img if scale >= 1.0 else cv2.resize(
+                img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        return cache[f]
+
+    frames = sorted(frame_paths)
+    out: list[PairMotion] = []
+    for gap in gaps:
+        for i in frames:
+            j = i + gap
+            if j not in frame_paths:
+                continue
+            ga, gb = gray(i), gray(j)
+            p0 = cv2.goodFeaturesToTrack(ga, maxCorners=max_corners, qualityLevel=0.01,
+                                         minDistance=7)
+            if p0 is None or len(p0) < MIN_INLIERS:
+                continue
+            p1, st, _ = cv2.calcOpticalFlowPyrLK(ga, gb, p0, None, winSize=win, maxLevel=3,
+                                                 criteria=crit)
+            back, st2, _ = cv2.calcOpticalFlowPyrLK(gb, ga, p1, None, winSize=win, maxLevel=3,
+                                                    criteria=crit)
+            good = (st.ravel() == 1) & (st2.ravel() == 1)
+            good &= np.linalg.norm((back - p0).reshape(-1, 2), axis=1) < FLOW_BACK_PX
+            if int(good.sum()) < MIN_INLIERS:
+                continue
+            src = (p0[good] / scale).astype(np.float32)
+            dst = (p1[good] / scale).astype(np.float32)
+            h, mask = cv2.findHomography(src, dst, cv2.USAC_MAGSAC, RANSAC_PX,
+                                         maxIters=5000, confidence=0.9999)
+            if h is None or mask is None or int(mask.sum()) < MIN_INLIERS:
+                continue
+            keep = mask.ravel().astype(bool)
+            p = np.column_stack([src.reshape(-1, 2)[keep], np.ones(int(keep.sum()))])
+            q = p @ h.T
+            w = np.where(np.abs(q[:, 2]) > 1e-9, q[:, 2], 1e-9)
+            err = np.linalg.norm(q[:, :2] / w[:, None] - dst.reshape(-1, 2)[keep], axis=1)
+            out.append(PairMotion(i, j, h, int(keep.sum()), float(np.median(err))))
+    return out
+
+
 def _rotation_only_map(f: float, rot_i: np.ndarray, rot_j: np.ndarray,
                        width: int, height: int) -> np.ndarray:
     """`K Rⱼ Rᵢᵀ K⁻¹` — what the image→image map MUST be if the camera only turned."""
