@@ -6,3 +6,7 @@ __pycache__/
 .ruff_cache/
 runs/
 samples/
+
+# Agent scratch, and git WORKTREES live here — .claude/worktrees/perf is a second full
+# checkout of this repo, so committing it would nest the repository inside itself.
+.claude/
