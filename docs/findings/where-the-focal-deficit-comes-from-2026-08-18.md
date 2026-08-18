@@ -109,14 +109,48 @@ a pixel and invisible.
 **That is the cause: `detect_segments` places markings with a depth-dependent lateral bias of tens of
 centimetres on the ground.**
 
-## What is not yet known
+## Down one more layer: nothing is grossly misplaced
 
-Why the detector does that. The obvious candidate is that a marking is a painted stripe about 10–12
-cm wide, not a line, and that near it is many pixels across while far it is one or two — so whatever
-`ridge_map` picks as the centre of a stripe has every reason to sit differently at the two ends of
-the pitch. That is a hypothesis, it is untested, and the register's own history says the tempting
-mechanism is usually the wrong one. It is written here so that measuring it counts as a test rather
-than a confirmation.
+The chain from pixels to a line is: `ridge_map` scores paint, a threshold makes a mask, `thin`
+reduces the mask to a one-pixel spine, a distance transform is built from the spine, and Hough reads
+lines off that. Each hand-off was measured.
+
+**The detected line sits on the spine exactly** — median difference 0.000 px over 155 segments. So
+`detect_segments` adds nothing; whatever is wrong is already in the spine.
+
+**And the spine sits on the ridge's own peak**, within half a pixel:
+
+| clip | thin (far) markings | peak offset |
+|---|---|---|
+| `CRO_MOR_180400` | n=67 | +0.0 px |
+| `MOR_POR_191625` | n=74 | +0.5 px |
+| `ENG_FRA_231054` | n=53 | +0.5 px |
+| `ARG_CRO_220954` | n=66 | +1.0 px |
+
+**So there is no gross misplacement to find, and a mechanism I nearly published is wrong.** The
+first clip measured was `ARG_CRO_220954`, whose spine sits a full pixel off the ridge peak with the
+response actually NEGATIVE at the line — which is the signature of morphological thinning choosing a
+side on an even-width structure, a real effect with a deterministic direction, and a tidy story. The
+next three clips refute it. One clip in four is not a mechanism, and the register already carries
+*"#17 was right — it measured on `fan`, the weakest of the six"* for exactly this.
+
+## What the cause actually is, stated no more strongly than it was measured
+
+**The deficit is sub-pixel error in where the spine falls, turned into tens of centimetres by
+foreshortening.** Every step is individually accurate to a fraction of a pixel and the composition
+is still worth 2.4 % of focal, because a line running toward the horizon converts a third of a pixel
+into a quarter of a metre of grass.
+
+That it is a *bias* and not noise is settled by the depth trend — +21 cm near against −7 cm far
+would average away otherwise, and the focal deficit reproduces on five matches. **What makes the
+sub-pixel error prefer a direction is not established.** Candidates, written here before measuring
+so that testing them counts: the partial-volume effect as a stripe narrows below one pixel, with the
+sub-pixel phase correlating with image position; asymmetric neighbours on the far side of the pitch,
+where markings sit against boards and crowd rather than grass; and the threshold in
+`over & (val >= RIDGE_MIN_V) & (surface > 0)` biting one edge of a stripe before the other.
+
+The practical reading is that this is a precision limit rather than a mistake, which is why the
+constant correction is worth keeping while the search continues.
 
 ## What this changes
 
