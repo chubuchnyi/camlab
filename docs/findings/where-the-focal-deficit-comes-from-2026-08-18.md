@@ -57,26 +57,66 @@ degeneracy — but the degeneracy is only the reason a small error in the eviden
 of position. It is the amplifier, not the source. The source is upstream of the objective, in what
 `detect_segments` hands it.
 
-## What inside the evidence — not yet settled
+## Inside the evidence: it is where the lines are, not which ones or which way they point
 
-One mechanism is measured and does **not** account for it. Detected lines sit slightly INWARD of the
-true markings, median −0.168 px, mean −0.467 px over 240 matched segments. The direction is right —
-pulling markings toward the centre makes the pitch look smaller and the focal short — but the size
-is not: the displacement is flat with radius (−0.186 px inner, −0.164 px outer, r = −0.12), and a
-near-uniform shift does not change scale. Sub-pixel line placement is not the generator.
+Three more rungs, each holding the constraint set fixed and changing one thing. All start the solver
+exactly on the truth, on the same real frames.
 
-The candidate still standing is **which marking a detected segment gets matched to**, and there is
-now a number attached to it: **36 of 276 detected segments — 13 %, about one and a half per frame —
-lie more than 25 px from ANY true marking.** They are not markings. Whatever they are, `line_errors`
-still has to assign each of them to something, and a segment assigned to the wrong marking is not a
-small error: it is a constraint pulling the camera toward a different, self-consistent, wrong scale.
-That would be stable across clips for the same reason the pitch looks the same in every stadium —
-which is the property the deficit has.
+| the detected segments, but… | focal ratio |
+|---|---|
+| as detected | 0.9853 |
+| junk removed — every segment >25 px from any true marking dropped | 0.9850 |
+| **each segment rotated to its marking's true direction**, position kept | 0.9848 |
+| **each segment shifted onto its marking's true line**, direction kept | **1.0119** |
+| both | 1.0144 |
 
-Measuring that is the next step and it is not done here. What can be said is that the evidence is
-13 % junk by count, that the junk is not accounted for anywhere in the ladder above, and that it is
-the only candidate left standing after the model, the objective, the template, the principal point,
-the distortion and sub-pixel line placement have each been eliminated on the numbers.
+**It is the perpendicular offset, and only that.** Fixing every line's angle changes the focal by
+five ten-thousandths. Fixing every line's offset moves it 2.7 % and lands where the distortion alone
+says it should — 1.0119 against the 1.0088 the same fit gives on perfectly projected lines. Correct
+the offsets and the deficit is not reduced, it is gone, and what remains is the distortion pushing
+the other way.
+
+Two hypotheses die here, and one of them was mine an hour earlier.
+
+**Junk detections are innocent.** 36 of 276 detected segments — 13 %, about one and a half a frame —
+lie more than 25 px from any true marking. Dropping all of them moves the focal from 0.9853 to
+0.9850, and on four of the six clips the result is identical to the digit, which means `line_errors`
+was already refusing to match them. The count was real and the inference from it was wrong.
+
+**And the angular error is a red herring.** Detected lines are off by a median 0.233° (p90 1.267°),
+which looked like enough to move a vanishing point. It is not: fixing it does nothing.
+
+## The offset, measured in the units that show it
+
+The reason this was missed is that I first measured the offset in **pixels**, got −0.168 px, and
+concluded it was far too small to matter. That measurement was correct and the units were wrong. A
+line running away from the camera is foreshortened, so a large sideways error on the grass is a
+small one on the screen — and the fit reasons about the grass.
+
+Back-projecting each detected segment onto the pitch with the truth's own camera, over 257 segments:
+
+| | median offset toward the camera | median depth |
+|---|---|---|
+| near third | **+21.4 cm** | 66.8 m |
+| middle third | −4.3 cm | 86.8 m |
+| far third | −6.8 cm | 104.1 m |
+
+`r(depth, offset) = −0.26`. The near markings are found about 21 cm nearer the camera than they are,
+the far ones about 7 cm beyond — roughly a 28 cm swing across the pitch, which stretches the pitch in
+depth and is exactly the kind of deformation a focal absorbs. In pixels the same thing is a fifth of
+a pixel and invisible.
+
+**That is the cause: `detect_segments` places markings with a depth-dependent lateral bias of tens of
+centimetres on the ground.**
+
+## What is not yet known
+
+Why the detector does that. The obvious candidate is that a marking is a painted stripe about 10–12
+cm wide, not a line, and that near it is many pixels across while far it is one or two — so whatever
+`ridge_map` picks as the centre of a stripe has every reason to sit differently at the two ends of
+the pitch. That is a hypothesis, it is untested, and the register's own history says the tempting
+mechanism is usually the wrong one. It is written here so that measuring it counts as a test rather
+than a confirmation.
 
 ## What this changes
 
