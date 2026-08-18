@@ -52,7 +52,14 @@ CAMERAS = Path.home() / "AVATAR/WorldPose/cameras"
 #:
 #: **Adding a name here is how a match leaves the held-out half, and it is a one-way door.** It
 #: should be added in the same commit as the measurement that spent it, so the two cannot drift.
-SPENT_MATCHES = ("CRO_MOR", "ENG_FRA", "MOR_POR", "NET_ARG")
+SPENT_MATCHES = (
+    "CRO_MOR", "ENG_FRA", "MOR_POR", "NET_ARG",
+    # Spent 2026-08-18 on the prediction in `findings/prediction-focal-deficit-2026-08-18.md`,
+    # which was committed before this line changed. The claim: camlab's focal deficit of 2.1 % is a
+    # constant of the METHOD, so a single correction takes the median position error from 3.69 m to
+    # 1.44 m. Held out until then; not available again whatever the answer turns out to be.
+    "ARG_CRO",
+)
 
 
 def match_of(clip_id: str) -> str:
