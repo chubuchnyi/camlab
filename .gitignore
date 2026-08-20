@@ -10,3 +10,7 @@ samples/
 # Agent scratch, and git WORKTREES live here — .claude/worktrees/perf is a second full
 # checkout of this repo, so committing it would nest the repository inside itself.
 .claude/
+
+# Regenerated in one command by scripts/overlay_worldpose.py; the JSON in out/ is measurement
+# and is committed, these are pictures of it and are not.
+out/worldpose/
