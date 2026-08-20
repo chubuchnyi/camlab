@@ -155,11 +155,11 @@ constant correction is worth keeping while the search continues.
 ## What this changes
 
 **The constant correction stays a correction, not a fix.** It is worth what it measures — 3.69 m to
-2.51 m on the working half, 2.67 m to 1.18 m on a held-out match — and it is now known to be
+2.51 m on the working half, 2.76 m to 1.48 m on a held-out match — and it is now known to be
 compensating for something in the evidence rather than for a missing model term. That is a reason to
 keep looking, not a reason to withhold it.
 
 **And the correction is not the freezing.** The control matters: re-fitting rotation and position
 with the focal held at its OWN value, changing nothing else, moves the position error not at all —
-3.69 m to 3.69 m, and 2.67 m to 2.67 m. The gain is the constant. `scripts/apply_focal_correction.py
+3.69 m to 3.69 m, and 2.76 m to 2.76 m. The gain is the constant. `scripts/apply_focal_correction.py
 --scale 1.0` is that control and it stays in the tree.

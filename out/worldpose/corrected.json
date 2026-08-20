@@ -99,6 +99,17 @@
   "worst_frame_reproj_px": 28.681297234288873
  },
  {
+  "clip": "ARG_CRO_234105",
+  "camera": "camera_focal_corrected.json",
+  "n_frames": 170,
+  "position_m": 2.59811753122089,
+  "rotation_deg": 0.5967250762829566,
+  "focal_ratio": 1.0052642217807164,
+  "reproj_median_px": 9.98199583626371,
+  "reproj_p90_px": 24.30403327888171,
+  "worst_frame_reproj_px": 15.383390730321151
+ },
+ {
   "clip": "CRO_MOR_180400",
   "camera": "camera_focal_corrected.json",
   "n_frames": 240,
